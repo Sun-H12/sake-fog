@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#2563EB">
+  <title>お酒記録アプリ</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="manifest" href="manifest.webmanifest">
+  <script src="db.js" defer></script>
+  <script src="backup.js" defer></script>
+  <script src="script.js" defer></script>
+</head>
+<body>
+  <main class="container">
+    <header id="app-header" class="app-header">
+      <h1>お酒記録アプリ</h1>
+      <p>飲んだお酒と感想を記録しましょう。</p>
+    </header>
+
+    <div id="save-notice" class="toast" role="status" aria-atomic="true" hidden>
+      <span class="toast-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><path id="toast-icon-path"/></svg>
+      </span>
+      <div class="toast-content">
+        <strong id="toast-title" class="toast-title"></strong>
+        <span id="toast-description" class="toast-description"></span>
+      </div>
+    </div>
+
+    <section id="entry-screen" aria-labelledby="record-heading" hidden>
+      <header class="entry-header">
+        <button id="back-button" class="close-button" type="button" aria-label="保存せずに一覧へ戻る">
+          <span class="close-face" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+          </span>
+        </button>
+        <h2 id="record-heading" tabindex="-1">お酒を記録する</h2>
+        <button id="register-button" type="button" aria-describedby="registration-note">登録する</button>
+      </header>
+      <div class="record-panel">
+      <div class="field">
+        <span id="photo-label" class="field-label">お酒の写真</span>
+        <div class="photo-picker" role="group" aria-labelledby="photo-label">
+          <div class="preview-area">
+            <span id="photo-placeholder" class="photo-placeholder">写真なし</span>
+            <img id="photo-preview" class="photo-preview" alt="選択したお酒の写真" hidden>
+            <button id="remove-photo" class="secondary-button remove-photo-button" type="button" aria-label="写真を削除" hidden>×</button>
+          </div>
+          <div class="photo-select">
+            <input type="file" id="sake-photo" class="file-input" name="photo" accept="image/*">
+            <label for="sake-photo" class="photo-select-label">写真を選択</label>
+          </div>
+        </div>
+        <p id="photo-error" class="error-message" role="alert"></p>
+      </div>
+
+      <div class="field">
+        <label for="sake-name">お酒の名前（必須）</label>
+        <input type="text" id="sake-name" name="name" placeholder="例：純米大吟醸" required>
+      </div>
+
+      <div class="field">
+        <label for="drank-on">飲んだ日（必須）</label>
+        <input type="date" id="drank-on" name="drankOn" required>
+      </div>
+
+      <div class="field">
+        <label for="sake-impression">感想</label>
+        <textarea id="sake-impression" name="impression" rows="5" placeholder="香りや味、飲んだときの感想など"></textarea>
+      </div>
+
+      <p class="note" id="registration-note">記録はこのブラウザー内に保存されます。写真と感想は任意です。</p>
+      <p id="registration-result" role="status"></p>
+      <button id="delete-record" class="delete-button" type="button" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg>
+        <span id="delete-label">この記録を削除する</span>
+      </button>
+      </div>
+    </section>
+    <section id="records-screen" aria-labelledby="records-heading">
+      <div class="list-heading">
+        <h2 id="records-heading" tabindex="-1">記録一覧</h2>
+        <button id="open-settings" class="secondary-button settings-button" type="button" aria-label="設定を開く">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4l.5 2.5 2 .9L19 5.5l2 3.5-1.8 1.7v2.6L21 15l-2 3.5-2.5-.9-2 .9L14 21h-4l-.5-2.5-2-.9-2.5.9L3 15l1.8-1.7v-2.6L3 9l2-3.5 2.5.9 2-.9z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+      <p id="list-status" role="status"></p>
+      <button id="retry-list" class="secondary-button" type="button" hidden>もう一度読み込む</button>
+      <div id="records-list" class="records-list"></div>
+      <button id="add-record" class="add-button" type="button" aria-label="新しいお酒を記録する">＋</button>
+    </section>
+    <section id="settings-screen" aria-labelledby="settings-heading" hidden>
+      <header class="settings-header">
+        <button id="settings-back" class="secondary-button" type="button">一覧へ戻る</button>
+        <h2 id="settings-heading" tabindex="-1">設定</h2>
+      </header>
+      <div class="record-panel backup-panel">
+        <h3>バックアップと復元</h3>
+        <p class="note">写真を含むすべての記録をJSONファイルで保存できます。</p>
+        <button id="create-backup" type="button">バックアップを作成</button>
+        <p class="note">復元すると現在の全記録を置き換えます。先に現在のバックアップを作成してください。読み込めるファイルは50MBまでです。</p>
+        <button id="restore-backup" class="secondary-button" type="button">バックアップから復元</button>
+        <input id="restore-file" type="file" accept=".json,application/json" aria-label="復元するバックアップファイル" hidden>
+        <p id="settings-status" role="status" aria-atomic="true"></p>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
