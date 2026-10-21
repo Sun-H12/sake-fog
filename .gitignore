@@ -1,0 +1,13 @@
+# Backups containing drink records and photos
+sake-fog-backup-*.json
+
+# Environment variable files
+.env
+.env.*
+
+# Windows-generated files
+Thumbs.db
+desktop.ini
+
+# Personal VS Code settings
+.vscode/
