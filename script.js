@@ -40,6 +40,139 @@ const listPhotoUrls = new Set();
 let toastTimer = null;
 let toastDismissTimer = null;
 let toastVersion = 0;
+// 履歴には画面名とIDだけを保存する。写真・入力内容は保存しない。
+let currentRoute = null;
+let routeVersion = 0;
+let returningToRecords = false;
+let entryRoute = null;
+let failedEntry = false;
+let isRouteLoading = false;
+let listNotice = null;
+
+function makeRoute(screen, recordId) {
+  return { app: 'sake-fog', version: 1, screen, recordId,
+    key: `${Date.now()}-${Math.random()}` };
+}
+
+function isAppRoute(route) {
+  return route?.app === 'sake-fog' && route.version === 1
+    && typeof route.key === 'string'
+    && ['records', 'new', 'edit', 'settings'].includes(route.screen)
+    && (route.screen !== 'edit' || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
+}
+
+function isBusy() {
+  return isSaving || isBackupBusy;
+}
+
+function syncControls() {
+  const blocked = isBusy() || returningToRecords || isRouteLoading;
+  entryControls.forEach((control) => { control.disabled = blocked; });
+  [backupButton, restoreButton, restoreFile, settingsBack,
+    document.getElementById('add-record'), document.getElementById('open-settings'),
+    ...recordsList.querySelectorAll('.edit-button')].forEach((control) => {
+    control.disabled = blocked;
+  });
+}
+
+function notifyList(message, error = false) {
+  listNotice = { message, error };
+  if (!recordsScreen.hidden) {
+    listStatus.textContent = message;
+    listStatus.classList.toggle('error-message', error);
+  }
+}
+
+function navigate(screen, recordId) {
+  if (isBusy() || returningToRecords || isRouteLoading || currentRoute.screen !== 'records') return;
+  const route = makeRoute(screen, recordId);
+  history.pushState(route, '');
+  currentRoute = route;
+  listNotice = null;
+  renderRoute();
+}
+
+function returnToRecords() {
+  // history.back()は非同期。同じ移動を二度要求しない。
+  if (returningToRecords || currentRoute.screen === 'records'
+    || history.state?.key !== currentRoute.key) return;
+  returningToRecords = true;
+  syncControls();
+  history.back();
+}
+
+async function renderRoute(focus = true) {
+  const version = ++routeVersion;
+  const route = currentRoute;
+  isRouteLoading = false;
+  if (route.screen === 'records') {
+    if (!isBusy() && !failedEntry) {
+      resetEntry();
+      entryRoute = null;
+    }
+    await showRecords(focus);
+  } else if (route.screen === 'settings') {
+    // 処理中に「進む」で戻っても進捗・結果を消さない。
+    showSettings(isBackupBusy);
+  } else {
+    const retained = entryRoute && (entryRoute.key === route.key || (failedEntry
+      && entryRoute.screen === route.screen && entryRoute.recordId === route.recordId));
+    if (retained) {
+      openEntry(editingRecord, true);
+      entryRoute = route;
+    } else if (route.screen === 'new') {
+      openEntry();
+      entryRoute = route;
+    } else {
+      isRouteLoading = true;
+      // 古い編集内容を操作させず、IDから保存済みの最新記録を取得する。
+      showRecords(false);
+      syncControls();
+      try {
+        const records = await getRecords();
+        if (version !== routeVersion) return;
+        const record = records.find((item) => item.id === route.recordId);
+        if (!record) throw new Error('この記録は存在しません。');
+        openEntry(record);
+        entryRoute = route;
+      } catch (error) {
+        if (version !== routeVersion) return;
+        notifyList(`編集画面を開けませんでした。${error.message}`, true);
+        returnToRecords();
+      } finally {
+        if (version === routeVersion) isRouteLoading = false;
+      }
+    }
+  }
+  if (version === routeVersion) syncControls();
+}
+
+function completeWrite(origin, type) {
+  failedEntry = false;
+  entryRoute = null;
+  resetEntry();
+  listNotice = null;
+  showToast(type);
+  // 先に端末の戻るで一覧へ移動していたら、追加で戻さない。
+  // 一覧の再取得は、busy解除後のfinishOperationで行う。
+  if (currentRoute.key === origin.key) returnToRecords();
+}
+
+function finishOperation() {
+  syncControls();
+  if (currentRoute.screen === 'records') renderRoute(false);
+}
+
+window.addEventListener('popstate', (event) => {
+  returningToRecords = false;
+  if (isAppRoute(event.state)) currentRoute = event.state;
+  else {
+    currentRoute = makeRoute('records');
+    history.replaceState(currentRoute, '');
+  }
+  renderRoute();
+});
+
 const toastMessages = {
   restored: {
     title: '記録を復元しました',
@@ -166,7 +299,7 @@ function renderRecord(record) {
   icon.append(path);
   edit.append(icon);
   edit.setAttribute('aria-label', `${record.name}を編集`);
-  edit.addEventListener('click', () => openEntry(record));
+  edit.addEventListener('click', () => navigate('edit', record.id));
   info.append(edit);
   return card;
 }
@@ -192,6 +325,8 @@ async function showRecords(focus = true) {
     records.forEach((record) => fragment.append(renderRecord(record)));
     recordsList.append(fragment);
     listStatus.textContent = records.length ? '' : 'まだ記録がありません';
+    if (listNotice) notifyList(listNotice.message, listNotice.error);
+    syncControls();
   } catch (error) {
     if (version !== listRequestVersion) return;
     clearRecordsList();
@@ -250,20 +385,22 @@ function resetEntry() {
   deleteButton.hidden = true;
 }
 
-function openEntry(record = null) {
-  if (isSaving) return;
+function openEntry(record = null, preserve = false) {
   ++listRequestVersion;
-  resetEntry();
+  if (!preserve) {
+    resetEntry();
+    failedEntry = false;
+  }
   editingRecord = record;
   deleteButton.hidden = record == null;
-  if (record) {
+  if (record && !preserve) {
     nameInput.value = record.name;
     impressionInput.value = record.impression || '';
     dateInput.value = drinkingDay(record) || localDate();
     selectedPhoto = record.photo || null;
   }
   entryHeading.textContent = record ? 'お酒を編集する' : 'お酒を記録する';
-  registerButton.textContent = record ? '保存する' : '登録する';
+  registerButton.textContent = isSaving ? '処理中…' : (record ? '保存する' : '登録する');
   hideToast();
   recordsScreen.hidden = true;
   settingsScreen.hidden = true;
@@ -276,11 +413,9 @@ function openEntry(record = null) {
   window.scrollTo(0, 0);
 }
 
-document.getElementById('add-record').addEventListener('click', () => openEntry());
+document.getElementById('add-record').addEventListener('click', () => navigate('new'));
 backButton.addEventListener('click', () => {
-  if (isSaving) return;
-  resetEntry();
-  showRecords();
+  if (!isBusy()) returnToRecords();
 });
 retryButton.addEventListener('click', () => showRecords(false));
 
@@ -308,7 +443,7 @@ nameInput.addEventListener('input', () => nameInput.setCustomValidity(''));
 entryScreen.addEventListener('input', () => { registrationResult.textContent = ''; });
 
 registerButton.addEventListener('click', async () => {
-  if (isSaving) return;
+  if (isBusy() || returningToRecords || isRouteLoading || entryScreen.hidden) return;
   registrationResult.textContent = '';
   nameInput.setCustomValidity(nameInput.value.trim() ? '' : 'お酒の名前を入力してください。');
   if (!nameInput.reportValidity() || !dateInput.reportValidity()) return;
@@ -319,55 +454,56 @@ registerButton.addEventListener('click', async () => {
     drankOn: dateInput.value,
   };
   const id = editingRecord?.id;
+  const origin = currentRoute;
   isSaving = true;
-  entryControls.forEach((control) => { control.disabled = true; });
+  syncControls();
   registerButton.textContent = '保存中…';
   registrationResult.classList.remove('is-error');
   try {
     await saveRecord(values, id);
-    resetEntry();
-    showToast(id == null ? 'created' : 'updated');
-    showRecords();
+    completeWrite(origin, id == null ? 'created' : 'updated');
   } catch (error) {
+    failedEntry = true;
     registrationResult.classList.add('is-error');
     registrationResult.textContent = '保存に失敗しました。入力内容は保持されています。もう一度お試しください。';
+    notifyList('保存に失敗しました。入力内容は保持されています。＋または元の記録の編集から再試行できます。', true);
     console.error('記録の保存に失敗しました:', error);
   } finally {
     isSaving = false;
-    entryControls.forEach((control) => { control.disabled = false; });
     registerButton.textContent = editingRecord ? '保存する' : '登録する';
+    finishOperation();
   }
 });
 
 deleteButton.addEventListener('click', async () => {
-  if (isSaving || editingRecord == null) return;
+  if (isBusy() || returningToRecords || isRouteLoading || entryScreen.hidden || editingRecord == null) return;
+  const origin = currentRoute;
   const id = editingRecord.id;
   if (!window.confirm('この記録を削除しますか？この操作は取り消せません。')) return;
   if (isSaving || editingRecord?.id !== id) return;
 
   isSaving = true;
-  entryControls.forEach((control) => { control.disabled = true; });
+  syncControls();
   deleteLabel.textContent = '削除中…';
   registrationResult.textContent = '';
   registrationResult.classList.remove('is-error');
   try {
     await deleteRecord(id);
-    resetEntry();
-    showToast('deleted');
-    showRecords();
+    completeWrite(origin, 'deleted');
   } catch (error) {
+    failedEntry = true;
     registrationResult.classList.add('is-error');
     registrationResult.textContent = '削除に失敗しました。入力内容は保持されています。もう一度お試しください。';
+    notifyList('削除に失敗しました。記録を確認し、もう一度お試しください。', true);
     console.error('記録の削除に失敗しました:', error);
   } finally {
     isSaving = false;
-    entryControls.forEach((control) => { control.disabled = false; });
     deleteLabel.textContent = 'この記録を削除する';
+    finishOperation();
   }
 });
 
-function showSettings() {
-  if (isSaving || isBackupBusy) return;
+function showSettings(preserve = false) {
   ++listRequestVersion;
   hideToast();
   clearRecordsList();
@@ -377,26 +513,26 @@ function showSettings() {
   settingsScreen.hidden = false;
   appHeader.hidden = true;
   document.body.classList.remove('entry-mode');
-  settingsStatus.textContent = '';
-  settingsStatus.classList.remove('error-message');
+  if (!preserve) {
+    settingsStatus.textContent = '';
+    settingsStatus.classList.remove('error-message');
+  }
   document.getElementById('settings-heading').focus();
   window.scrollTo(0, 0);
 }
 
 function setBackupBusy(busy) {
   isBackupBusy = busy;
-  [backupButton, restoreButton, restoreFile, settingsBack].forEach((control) => {
-    control.disabled = busy;
-  });
+  syncControls();
 }
 
-document.getElementById('open-settings').addEventListener('click', showSettings);
+document.getElementById('open-settings').addEventListener('click', () => navigate('settings'));
 settingsBack.addEventListener('click', () => {
-  if (!isBackupBusy) showRecords();
+  if (!isBusy()) returnToRecords();
 });
 
 backupButton.addEventListener('click', async () => {
-  if (isBackupBusy) return;
+  if (isBusy() || returningToRecords || settingsScreen.hidden) return;
   setBackupBusy(true);
   settingsStatus.classList.remove('error-message');
   settingsStatus.textContent = 'バックアップを作成しています…';
@@ -414,51 +550,67 @@ backupButton.addEventListener('click', async () => {
   } catch (error) {
     settingsStatus.classList.add('error-message');
     settingsStatus.textContent = `バックアップを作成できませんでした。${error.message}`;
+    notifyList(settingsStatus.textContent, true);
   } finally {
     if (downloadUrl) setTimeout(() => URL.revokeObjectURL(downloadUrl), 60000);
     setBackupBusy(false);
+    finishOperation();
   }
 });
 
 restoreButton.addEventListener('click', () => {
-  if (isBackupBusy) return;
+  if (isBusy() || returningToRecords || settingsScreen.hidden) return;
   restoreFile.value = '';
   restoreFile.click();
 });
 
 restoreFile.addEventListener('change', async () => {
   const file = restoreFile.files[0];
-  if (!file || isBackupBusy) return;
+  if (!file || isBusy() || returningToRecords || settingsScreen.hidden) return;
+  const origin = currentRoute;
+  const originVersion = routeVersion;
+  const canRestore = () => {
+    if (originVersion === routeVersion) return true;
+    settingsStatus.textContent = '画面を移動したため復元を中止しました。現在の記録は変更していません。';
+    return false;
+  };
   setBackupBusy(true);
   settingsStatus.classList.remove('error-message');
   settingsStatus.textContent = 'バックアップを検証しています…';
   let committed = false;
   try {
     const records = await readBackupFile(file);
+    if (!canRestore()) return;
     const currentCount = await getRecordCount();
+    if (!canRestore()) return;
     const message = `現在の記録：${currentCount}件\n復元予定：${records.length}件\n\n現在の全記録を置き換えます。この操作は取り消せません。復元しますか？`;
     if (!window.confirm(message)) {
       settingsStatus.textContent = '復元をキャンセルしました。現在の記録は変更していません。';
       return;
     }
+    if (!canRestore()) return;
     settingsStatus.textContent = '記録を復元しています…';
     await replaceRecords(records, currentCount);
     committed = true;
   } catch (error) {
     settingsStatus.classList.add('error-message');
     settingsStatus.textContent = `復元できませんでした。既存の記録は変更していません。${error.message}`;
+    notifyList(settingsStatus.textContent, true);
   } finally {
     restoreFile.value = '';
     setBackupBusy(false);
+    if (!committed) finishOperation();
   }
   if (committed) {
-    resetEntry();
-    showToast('restored');
-    showRecords();
+    completeWrite(origin, 'restored');
+    finishOperation();
   }
 });
 
-showRecords(false);
+// 再読み込みでは既存の履歴を再利用し、一覧の履歴を重複させない。
+currentRoute = isAppRoute(history.state) ? history.state : makeRoute('records');
+if (!isAppRoute(history.state)) history.replaceState(currentRoute, '');
+renderRoute(false);
 
 // 画面の初期化を待たせず、ページの読み込み完了後に登録する。
 if ('serviceWorker' in navigator && window.isSecureContext) {
