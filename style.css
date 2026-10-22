@@ -161,8 +161,8 @@ textarea:focus-visible {
 .record-impression {
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
   overflow: hidden;
   white-space: pre-wrap;
   margin: 0 0 10px;
