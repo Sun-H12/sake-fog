@@ -580,7 +580,13 @@ textarea {
   margin: 0;
 }
 
-.settings-button {
+.settings-header {
+  justify-content: flex-start;
+  gap: 12px;
+}
+
+.settings-button,
+.settings-back-button {
   display: grid;
   place-items: center;
   flex-shrink: 0;
@@ -590,7 +596,8 @@ textarea {
   border-radius: 50%;
 }
 
-.settings-button svg {
+.settings-button svg,
+.settings-back-button svg {
   width: 22px;
   height: 22px;
   fill: none;

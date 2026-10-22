@@ -1,5 +1,5 @@
 // 静的ファイルを更新する際は、このバージョンも更新する。
-const CACHE_VERSION = 'v6';
+const CACHE_VERSION = 'v7';
 // 同一オリジンの別アプリや、別の配置先のキャッシュを削除しない。
 const CACHE_PREFIX = `sake-fog-static-${encodeURIComponent(self.registration.scope)}-`;
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
