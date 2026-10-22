@@ -282,16 +282,6 @@ function renderRecord(record) {
   info.className = 'record-info';
   info.append(name, impression, day);
   card.append(photo, info);
-  if (record.updatedAt) {
-    const updated = document.createElement('time');
-    const timestamp = new Date(record.updatedAt);
-    if (!Number.isNaN(timestamp.getTime())) {
-      updated.dateTime = timestamp.toISOString();
-      updated.textContent = `最終更新日時：${timestamp.toLocaleString('ja-JP')}`;
-      updated.className = 'record-updated';
-      info.append(updated);
-    }
-  }
   const edit = document.createElement('button');
   edit.type = 'button';
   edit.className = 'secondary-button edit-button';

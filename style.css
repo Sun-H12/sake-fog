@@ -176,11 +176,6 @@ textarea:focus-visible {
   font-size: 0.8rem;
 }
 
-.record-card .record-updated {
-  margin-top: 5px;
-  font-size: 0.7rem;
-}
-
 .edit-button {
   position: absolute;
   right: 0;
