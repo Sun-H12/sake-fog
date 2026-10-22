@@ -1,5 +1,5 @@
 // 静的ファイルを更新する際は、このバージョンも更新する。
-const CACHE_VERSION = 'v3';
+const CACHE_VERSION = 'v5';
 // 同一オリジンの別アプリや、別の配置先のキャッシュを削除しない。
 const CACHE_PREFIX = `sake-fog-static-${encodeURIComponent(self.registration.scope)}-`;
 const CACHE_NAME = `${CACHE_PREFIX}${CACHE_VERSION}`;
@@ -10,9 +10,9 @@ const APP_FILES = [
   'db.js',
   'backup.js',
   'manifest.webmanifest',
-  'icons/icon-192.png',
-  'icons/icon-512.png',
-  'icons/icon-maskable-512.png',
+  'icons/icon-192-v2.png',
+  'icons/icon-512-v2.png',
+  'icons/icon-maskable-512-v3.png',
 ];
 const APP_URLS = APP_FILES.map((file) => new URL(file, self.registration.scope).href);
 const APP_URL_SET = new Set(APP_URLS);
