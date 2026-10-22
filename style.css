@@ -602,23 +602,32 @@ textarea {
   stroke-linejoin: round;
 }
 
-.backup-panel {
+.backup-panel,
+.update-panel {
   display: grid;
   gap: 20px;
 }
 
 .backup-panel h3,
-#settings-status {
+.update-panel h3,
+#settings-status,
+#update-status {
   margin: 0;
 }
 
-#settings-status {
+#settings-status,
+#update-status {
   font-size: 0.875rem;
   overflow-wrap: anywhere;
 }
 
-#settings-status:empty {
+#settings-status:empty,
+#update-status:empty {
   display: none;
+}
+
+.update-panel {
+  margin-top: 20px;
 }
 
 .delete-button {

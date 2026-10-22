@@ -28,6 +28,15 @@ const backupButton = document.getElementById('create-backup');
 const restoreButton = document.getElementById('restore-backup');
 const restoreFile = document.getElementById('restore-file');
 const settingsStatus = document.getElementById('settings-status');
+const checkUpdateButton = document.getElementById('check-update');
+const updateStatus = document.getElementById('update-status');
+const supportsAppUpdates = 'serviceWorker' in navigator && window.isSecureContext;
+let appRegistration = null;
+let registrationPromise = null;
+let isCheckingUpdate = false;
+let observedUpdateWorker = null;
+const watchedRegistrations = new WeakSet();
+const watchedWorkers = new WeakSet();
 let isBackupBusy = false;
 const entryControls = [photoInput, nameInput, impressionInput, dateInput, registerButton, removePhotoButton, backButton, deleteButton];
 let editingRecord = null;
@@ -73,6 +82,7 @@ function syncControls() {
     ...recordsList.querySelectorAll('.edit-button')].forEach((control) => {
     control.disabled = blocked;
   });
+  syncUpdateButton();
 }
 
 function notifyList(message, error = false) {
@@ -520,6 +530,117 @@ function setBackupBusy(busy) {
   syncControls();
 }
 
+function syncUpdateButton() {
+  // 更新確認は既存の保存・バックアップ処理をロックしない。
+  checkUpdateButton.disabled = !supportsAppUpdates || isBusy() || returningToRecords
+    || isCheckingUpdate || Boolean(appRegistration?.installing
+      && !['redundant', 'activated'].includes(appRegistration.installing.state));
+}
+
+function setUpdateStatus(message, error = false) {
+  updateStatus.textContent = message;
+  updateStatus.classList.toggle('error-message', error);
+  syncUpdateButton();
+}
+
+function showPendingUpdate() {
+  const waiting = appRegistration?.waiting;
+  if (waiting && appRegistration.active && waiting !== appRegistration.active
+    && waiting.state === 'installed') {
+    setUpdateStatus('更新の準備ができました。入力内容を保存し、アプリと関連するタブをすべて閉じてから開き直してください。');
+    return true;
+  }
+  const installing = appRegistration?.installing;
+  if ((installing && !['redundant', 'activated'].includes(installing.state))
+    || (waiting?.state === 'installed' && !appRegistration.active)) {
+    setUpdateStatus(appRegistration.active
+      ? '新しいバージョンを取得しています…' : 'アプリの初期準備をしています…');
+    return true;
+  }
+  return false;
+}
+
+function observeAppRegistration(registration) {
+  appRegistration = registration;
+  const watchWorker = () => {
+    const worker = registration.installing;
+    if (!worker || watchedWorkers.has(worker)) return;
+    watchedWorkers.add(worker);
+    observedUpdateWorker = worker;
+    const isUpdate = Boolean(registration.active && registration.active !== worker);
+    const reflectState = () => {
+      if (showPendingUpdate()) return;
+      if (worker.state === 'redundant') {
+        setUpdateStatus('更新を確認できませんでした。通信環境を確認して、もう一度お試しください。', true);
+      } else if (worker.state === 'activated') {
+        setUpdateStatus(isUpdate
+          ? '更新状態が変わりました。入力内容を保存し、アプリを閉じてから開き直してください。'
+          : 'アプリの初期準備が完了しました。');
+      }
+      syncUpdateButton();
+    };
+    worker.addEventListener('statechange', reflectState);
+    reflectState();
+  };
+  if (!watchedRegistrations.has(registration)) {
+    watchedRegistrations.add(registration);
+    registration.addEventListener('updatefound', watchWorker);
+  }
+  watchWorker();
+  showPendingUpdate();
+  syncUpdateButton();
+  return registration;
+}
+
+function registerServiceWorker() {
+  if (!supportsAppUpdates) return Promise.resolve(null);
+  if (!registrationPromise) {
+    registrationPromise = navigator.serviceWorker.register('./sw.js', {
+      scope: './', updateViaCache: 'none',
+    }).then(observeAppRegistration).catch((error) => {
+      registrationPromise = null; // 通信が回復した後に再試行できるようにする。
+      if (!showPendingUpdate()) {
+        setUpdateStatus('更新を確認できませんでした。現在のアプリは引き続き利用できます。', true);
+      }
+      console.warn('Service Workerの登録に失敗しました:', error);
+      return null;
+    });
+  }
+  return registrationPromise;
+}
+
+checkUpdateButton.addEventListener('click', async () => {
+  if (!supportsAppUpdates || isCheckingUpdate || isBusy() || returningToRecords || settingsScreen.hidden) return;
+  isCheckingUpdate = true;
+  syncUpdateButton();
+  try {
+    if (!appRegistration) {
+      // 他の配置先のService Workerは利用せず、このアプリの登録だけを取得する。
+      const existing = await navigator.serviceWorker.getRegistration('./');
+      if (existing?.scope === new URL('./', location.href).href) observeAppRegistration(existing);
+      else await registerServiceWorker();
+    }
+    if (!appRegistration || showPendingUpdate()) return;
+    if (!navigator.onLine) throw new Error('Offline');
+    setUpdateStatus('アップデートを確認しています…');
+    const workerBeforeCheck = observedUpdateWorker;
+    await appRegistration.update();
+    if (showPendingUpdate()) return;
+    // update()の完了はインストール・適用の完了を意味しない。
+    if (observedUpdateWorker !== workerBeforeCheck) return;
+    setUpdateStatus(appRegistration.active
+      ? '新しいアップデートは見つかりませんでした。'
+      : 'アプリの準備が完了していません。しばらくしてから、もう一度確認してください。');
+  } catch (error) {
+    if (!showPendingUpdate()) {
+      setUpdateStatus('更新を確認できませんでした。通信環境を確認して、もう一度お試しください。現在のアプリは引き続き利用できます。', true);
+    }
+  } finally {
+    isCheckingUpdate = false;
+    syncUpdateButton();
+  }
+});
+
 document.getElementById('open-settings').addEventListener('click', () => navigate('settings'));
 settingsBack.addEventListener('click', () => {
   if (!isBusy()) returnToRecords();
@@ -607,14 +728,12 @@ if (!isAppRoute(history.state)) history.replaceState(currentRoute, '');
 renderRoute(false);
 
 // 画面の初期化を待たせず、ページの読み込み完了後に登録する。
-if ('serviceWorker' in navigator && window.isSecureContext) {
-  const registerServiceWorker = () => {
-    navigator.serviceWorker.register('./sw.js', { scope: './', updateViaCache: 'none' })
-      .catch((error) => console.warn('Service Workerの登録に失敗しました:', error));
-  };
+if (supportsAppUpdates) {
   if (document.readyState === 'complete') {
     registerServiceWorker();
   } else {
     window.addEventListener('load', registerServiceWorker, { once: true });
   }
+} else {
+  setUpdateStatus('この環境ではアップデート確認を利用できません。');
 }

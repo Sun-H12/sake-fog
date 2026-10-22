@@ -106,6 +106,12 @@
         <input id="restore-file" type="file" accept=".json,application/json" aria-label="復元するバックアップファイル" hidden>
         <p id="settings-status" role="status" aria-atomic="true"></p>
       </div>
+      <section class="record-panel update-panel" aria-labelledby="update-heading">
+        <h3 id="update-heading">アプリのアップデート</h3>
+        <p class="note">通常は自動で更新を確認します。必要なときは、ここから確認できます。</p>
+        <button id="check-update" class="secondary-button" type="button" aria-describedby="update-status">アップデートを確認</button>
+        <p id="update-status" role="status" aria-live="polite" aria-atomic="true"></p>
+      </section>
     </section>
   </main>
 </body>
