@@ -130,6 +130,21 @@ textarea:focus-visible {
   object-fit: contain;
 }
 
+/* 読み込み済みの写真は、元の比率のまま列幅・最大高さに収める。 */
+.record-photo.has-photo {
+  align-self: start;
+  height: auto;
+  background: transparent;
+}
+
+.record-photo.has-photo img {
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 156px;
+  border-radius: 10px;
+}
+
 .record-info {
   position: relative;
   min-width: 0;

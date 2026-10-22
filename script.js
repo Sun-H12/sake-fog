@@ -257,7 +257,11 @@ function renderRecord(record) {
     const url = URL.createObjectURL(record.photo);
     listPhotoUrls.add(url);
     image.alt = `${record.name}の写真`;
+    image.addEventListener('load', () => {
+      photo.classList.add('has-photo');
+    }, { once: true });
     image.addEventListener('error', () => {
+      photo.classList.remove('has-photo');
       photo.textContent = '写真を表示できません';
       URL.revokeObjectURL(url);
       listPhotoUrls.delete(url);
