@@ -853,7 +853,8 @@ textarea {
 .wish-card { padding: 16px; }
 .wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }
-.wish-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px; }
+.wish-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 12px; }
+.wish-create-record { margin-right: auto; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; }
 .wish-edit { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
 .wish-edit svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .wish-delete { color: var(--danger); }

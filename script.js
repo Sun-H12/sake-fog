@@ -91,7 +91,7 @@ const listPhotoUrls = new Set();
 let toastTimer = null;
 let toastDismissTimer = null;
 let toastVersion = 0;
-// 履歴には画面名とIDだけを保存する。写真・入力内容は保存しない。
+// 履歴には画面情報と新規登録の初期名を保存する。写真・編集中の入力は保存しない。
 let currentRoute = null;
 let routeVersion = 0;
 let returningToRecords = false;
@@ -100,9 +100,10 @@ let failedEntry = false;
 let isRouteLoading = false;
 let listNotice = null;
 
-function makeRoute(screen, recordId) {
+function makeRoute(screen, recordId, initialName) {
   return { app: 'sake-fog', version: 1, screen, recordId,
     list: currentRoute?.list || 'records',
+    ...(initialName === undefined ? {} : { initialName }),
     key: `${Date.now()}-${Math.random()}` };
 }
 
@@ -110,6 +111,8 @@ function isAppRoute(route) {
   return route?.app === 'sake-fog' && route.version === 1
     && typeof route.key === 'string'
     && (route.list === undefined || ['records', 'wishlist'].includes(route.list))
+    && (!Object.hasOwn(route, 'initialName') || (route.screen === 'new' && route.recordId == null
+      && typeof route.initialName === 'string' && route.initialName.trim() !== ''))
     && ['records', 'new', 'edit', 'settings', 'detail', 'wish-new', 'wish-edit'].includes(route.screen)
     && (!['edit', 'detail', 'wish-edit'].includes(route.screen) || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
 }
@@ -124,7 +127,7 @@ function syncControls() {
   [backupButton, restoreButton, restoreFile, settingsBack,
     recordsSwitch, wishlistSwitch, wishName, wishMemo, wishSave, wishBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
-    ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete, .wish-edit')].forEach((control) => {
+    ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete, .wish-edit, .wish-create-record')].forEach((control) => {
     control.disabled = blocked;
   });
   // 詳細の読み込み中も戻れるようにする。
@@ -141,11 +144,19 @@ function notifyList(message, error = false) {
   }
 }
 
-function navigate(screen, recordId) {
+function navigate(screen, recordId, initialName) {
   if (isBusy() || returningToRecords || isRouteLoading || currentRoute.screen !== 'records') return;
-  const route = makeRoute(screen, recordId);
+  // 通常の「＋」での保存失敗後の再試行は、従来どおり同じ下書きを開く。
+  // 名前を引き継いだ登録は、別の新規登録として扱う。
+  const retryNew = screen === 'new' && initialName === undefined && failedEntry
+    && entryRoute?.screen === 'new' && !Object.hasOwn(entryRoute, 'initialName');
+  const route = retryNew ? { ...entryRoute, list: currentRoute.list } : makeRoute(screen, recordId, initialName);
   if (!isAppRoute(route)) return;
+  // キャンセル時に、失敗したフォームへ「進む」ための履歴を失わない。
+  const discardNew = screen === 'new' && failedEntry && entryRoute?.key !== route.key;
+  if (discardNew && !window.confirm('保存に失敗した入力が残っています。入力を破棄して別の登録画面を開きますか？')) return;
   history.pushState(route, '');
+  if (discardNew) failedEntry = false;
   currentRoute = route;
   listNotice = null;
   renderRoute();
@@ -220,13 +231,25 @@ async function renderRoute(focus = true) {
     // 処理中に「進む」で戻っても進捗・結果を消さない。
     showSettings(isBackupBusy);
   } else {
-    const retained = entryRoute && (entryRoute.key === route.key || (failedEntry
+    const retained = entryRoute && (entryRoute.key === route.key || (failedEntry && route.screen !== 'new'
       && entryRoute.screen === route.screen && entryRoute.recordId === route.recordId));
+    if (isSaving && !retained) {
+      returnToRecords();
+      return;
+    }
+    if (failedEntry && !retained) {
+      if (!window.confirm('保存に失敗した入力が残っています。入力を破棄して別の登録・編集画面を開きますか？')) {
+        returnToRecords();
+        return;
+      }
+    }
     if (retained) {
       openEntry(editingRecord, true);
       entryRoute = route;
     } else if (route.screen === 'new') {
       openEntry();
+      // 空の新規フォームを基準にし、引き継いだ名前も未保存として保護する。
+      if (route.initialName !== undefined) nameInput.value = route.initialName;
       entryRoute = route;
     } else {
       isRouteLoading = true;
@@ -499,6 +522,13 @@ function renderWish(item) {
   }
   const actions = document.createElement('div');
   actions.className = 'wish-actions';
+  const create = document.createElement('button');
+  create.type = 'button';
+  create.className = 'secondary-button wish-create-record';
+  create.textContent = '飲酒記録を作成';
+  create.setAttribute('aria-label', `${item.name}の飲酒記録を作成`);
+  create.addEventListener('click', () => navigate('new', undefined, item.name));
+  actions.append(create);
   const edit = document.createElement('button');
   edit.type = 'button';
   edit.className = 'secondary-button wish-edit';
