@@ -87,16 +87,16 @@
       <div class="field">
         <span id="photo-label" class="field-label">お酒の写真</span>
         <div class="photo-picker" role="group" aria-labelledby="photo-label">
-          <div class="preview-area">
+          <div id="photo-previews" class="photo-previews">
             <span id="photo-placeholder" class="photo-placeholder">写真なし</span>
-            <img id="photo-preview" class="photo-preview" alt="選択したお酒の写真" hidden>
-            <button id="remove-photo" class="secondary-button remove-photo-button" type="button" aria-label="写真を削除" hidden>×</button>
           </div>
           <div class="photo-select">
-            <input type="file" id="sake-photo" class="file-input" name="photo" accept="image/*">
-            <label for="sake-photo" class="photo-select-label">写真を選択</label>
+            <input type="file" id="sake-photo" class="file-input" name="photo" accept="image/*" multiple aria-describedby="photo-note photo-warning">
+            <label for="sake-photo" class="photo-select-label">写真を追加</label>
           </div>
         </div>
+        <p id="photo-note" class="note">最大3枚。先頭の写真が一覧に表示されます。</p>
+        <p id="photo-warning" class="note" role="status" aria-live="polite"></p>
         <p id="photo-error" class="error-message" role="alert"></p>
       </div>
 

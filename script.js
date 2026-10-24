@@ -1,5 +1,6 @@
 ﻿const photoInput = document.getElementById('sake-photo');
-const photoPreview = document.getElementById('photo-preview');
+const photoPreviews = document.getElementById('photo-previews');
+const photoWarning = document.getElementById('photo-warning');
 const photoError = document.getElementById('photo-error');
 const nameInput = document.getElementById('sake-name');
 const impressionInput = document.getElementById('sake-impression');
@@ -28,11 +29,9 @@ const toastTitle = document.getElementById('toast-title');
 const toastDescription = document.getElementById('toast-description');
 const toastIconPath = document.getElementById('toast-icon-path');
 const backButton = document.getElementById('back-button');
-const removePhotoButton = document.getElementById('remove-photo');
 const retryButton = document.getElementById('retry-list');
 const entryHeading = document.getElementById('record-heading');
 const appHeader = document.getElementById('app-header');
-const photoPlaceholder = document.getElementById('photo-placeholder');
 const deleteButton = document.getElementById('delete-record');
 const deleteLabel = document.getElementById('delete-label');
 const settingsScreen = document.getElementById('settings-screen');
@@ -52,6 +51,7 @@ const detailBack = document.getElementById('detail-back');
 const detailContent = document.getElementById('detail-content');
 const detailStatus = document.getElementById('detail-status');
 let detailPhotoUrl = null;
+let detailPhotoViewer = null;
 const backupButton = document.getElementById('create-backup');
 const restoreButton = document.getElementById('restore-backup');
 const restoreFile = document.getElementById('restore-file');
@@ -80,14 +80,16 @@ let updateRouteVersion = null;
 let didReloadForUpdate = false;
 let noticeReturnFocus = null;
 let isBackupBusy = false;
-const entryControls = [photoInput, nameInput, impressionInput, dateInput, registerButton, removePhotoButton, backButton, deleteButton];
+const entryControls = [photoInput, nameInput, impressionInput, dateInput, registerButton, backButton, deleteButton];
 let editingRecord = null;
-let selectedPhoto = null;
-let previewUrl = null;
+let selectedPhotos = [];
+const previewUrls = new Set();
+let photoWarnings = [];
 let isSaving = false;
 let listRequestVersion = 0;
 let previewVersion = 0;
 const listPhotoUrls = new Set();
+const listPhotoViewers = new Set();
 let toastTimer = null;
 let toastDismissTimer = null;
 let toastVersion = 0;
@@ -124,6 +126,8 @@ function isBusy() {
 function syncControls() {
   const blocked = isBusy() || returningToRecords || isRouteLoading;
   entryControls.forEach((control) => { control.disabled = blocked; });
+  photoInput.disabled = blocked || selectedPhotos.length >= 3;
+  photoPreviews.querySelectorAll('.remove-photo-button').forEach((button) => { button.disabled = blocked; });
   [backupButton, restoreButton, restoreFile, settingsBack,
     recordsSwitch, wishlistSwitch, wishName, wishMemo, wishSave, wishBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
@@ -133,6 +137,9 @@ function syncControls() {
   // 詳細の読み込み中も戻れるようにする。
   detailBack.disabled = isBusy() || returningToRecords;
   wishBack.disabled = isBusy() || returningToRecords;
+  document.querySelectorAll('.photo-navigation button, .photo-indicators button').forEach((button) => {
+    button.disabled = blocked || button.dataset.edge === 'true';
+  });
   syncUpdateButton();
 }
 
@@ -385,9 +392,157 @@ function drinkingDay(record) {
 }
 
 function clearRecordsList() {
+  listPhotoViewers.forEach((viewer) => viewer.dispose());
+  listPhotoViewers.clear();
   recordsList.replaceChildren();
   listPhotoUrls.forEach((url) => URL.revokeObjectURL(url));
   listPhotoUrls.clear();
+}
+
+// 一覧と詳細で、写真位置・URL・入力操作を同じ処理にまとめる。
+function createPhotoViewer(record, { list = false, onTap = null } = {}) {
+  const photos = getRecordPhotos(record);
+  const element = document.createElement('div');
+  element.className = list ? 'record-media' : 'detail-photo';
+  element.classList.toggle('has-multiple', photos.length > 1);
+  const area = document.createElement('div');
+  area.className = list ? 'record-photo' : 'detail-photo-image';
+  const dots = document.createElement('div');
+  dots.className = 'photo-indicators';
+  dots.hidden = photos.length < 2;
+  dots.setAttribute('role', 'group');
+  dots.setAttribute('aria-label', `${record.name}の写真を選択`);
+  const navigation = document.createElement('div');
+  navigation.className = 'photo-navigation';
+  navigation.hidden = list || photos.length < 2;
+  const previous = document.createElement('button');
+  const next = document.createElement('button');
+  const count = document.createElement('span');
+  previous.type = next.type = 'button';
+  previous.className = next.className = 'secondary-button';
+  previous.textContent = '前へ';
+  next.textContent = '次へ';
+  count.setAttribute('role', 'status');
+  count.setAttribute('aria-live', 'polite');
+  navigation.append(previous, count, next);
+  element.append(area, dots);
+  if (!list) element.append(navigation);
+  let position = 0;
+  let url = null;
+  let disposed = false;
+  const canInteract = () => !disposed && !isBusy() && !returningToRecords && !isRouteLoading
+    && !(list ? recordsScreen.hidden : detailScreen.hidden);
+  const release = () => {
+    if (!url) return;
+    URL.revokeObjectURL(url);
+    if (list) listPhotoUrls.delete(url);
+    else if (detailPhotoUrl === url) detailPhotoUrl = null;
+    url = null;
+  };
+  const render = () => {
+    release();
+    area.classList.remove('has-photo');
+    area.textContent = '写真なし';
+    dots.querySelectorAll('button').forEach((dot, index) => {
+      if (index === position) dot.setAttribute('aria-current', 'true');
+      else dot.removeAttribute('aria-current');
+    });
+    count.textContent = `${position + 1} / ${photos.length}`;
+    previous.dataset.edge = String(position === 0);
+    next.dataset.edge = String(position === photos.length - 1);
+    previous.disabled = position === 0 || isBusy();
+    next.disabled = position === photos.length - 1 || isBusy();
+    if (!photos.length) return;
+    const image = document.createElement('img');
+    url = URL.createObjectURL(photos[position]);
+    const imageUrl = url;
+    if (list) listPhotoUrls.add(url);
+    else detailPhotoUrl = url;
+    image.alt = `${record.name}の写真 ${position + 1} / ${photos.length}`;
+    image.draggable = false;
+    image.addEventListener('load', () => {
+      if (!disposed && url === imageUrl) area.classList.add('has-photo');
+    }, { once: true });
+    image.addEventListener('error', () => {
+      if (disposed || url !== imageUrl) return;
+      area.classList.remove('has-photo');
+      area.textContent = '写真を表示できません';
+      release();
+    }, { once: true });
+    image.src = url;
+    area.replaceChildren(image);
+  };
+  const select = (index) => {
+    if (!canInteract()) return;
+    const target = Math.max(0, Math.min(photos.length - 1, index));
+    if (target === position || !photos.length) return;
+    position = target;
+    render();
+  };
+  photos.forEach((_, index) => {
+    const dot = document.createElement('button');
+    dot.type = 'button';
+    dot.className = 'photo-dot';
+    dot.setAttribute('aria-label', `${index + 1}枚目の写真を表示`);
+    dot.addEventListener('click', () => select(index));
+    dots.append(dot);
+  });
+  previous.addEventListener('click', () => select(position - 1));
+  next.addEventListener('click', () => select(position + 1));
+  const pointers = new Set();
+  let gesture = null;
+  let suppressedClick = null;
+  area.addEventListener('pointerdown', (event) => {
+    if (!canInteract()) return;
+    // 新しい操作で、直前のスワイプに対するクリック抑止を解除する。
+    suppressedClick = null;
+    if (event.pointerType === 'mouse') return;
+    pointers.add(event.pointerId);
+    if (pointers.size > 1 || !event.isPrimary) {
+      if (gesture) gesture.cancelled = true;
+      return;
+    }
+    gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false, cancelled: false };
+  });
+  area.addEventListener('pointermove', (event) => {
+    if (!gesture || event.pointerId !== gesture.id) return;
+    if (Math.abs(event.clientX - gesture.x) > 8 || Math.abs(event.clientY - gesture.y) > 8) gesture.moved = true;
+  });
+  area.addEventListener('pointerup', (event) => {
+    if (event.pointerType === 'mouse') return;
+    pointers.delete(event.pointerId);
+    if (gesture && event.pointerId === gesture.id) {
+      const dx = event.clientX - gesture.x;
+      const dy = event.clientY - gesture.y;
+      if (gesture.moved || gesture.cancelled || Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        suppressedClick = { id: event.pointerId, until: performance.now() + 700 };
+      }
+      if (!gesture.cancelled && Math.abs(dx) >= 30 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+        select(position + (dx < 0 ? 1 : -1));
+      }
+      gesture = null;
+    } else {
+      suppressedClick = { id: event.pointerId, until: performance.now() + 700 };
+    }
+  });
+  area.addEventListener('pointercancel', (event) => {
+    if (event.pointerType === 'mouse') return;
+    pointers.delete(event.pointerId);
+    suppressedClick = { id: event.pointerId, until: performance.now() + 700 };
+    if (gesture) gesture.cancelled = true;
+    if (!pointers.size) gesture = null;
+  });
+  element.addEventListener('click', (event) => {
+    if (event.detail !== 0 && suppressedClick && performance.now() <= suppressedClick.until
+      && (event.pointerId === undefined || event.pointerId === suppressedClick.id)) {
+      suppressedClick = null;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+    }
+  }, true);
+  area.addEventListener('click', () => { if (canInteract()) onTap?.(); });
+  render();
+  return { element, dispose() { disposed = true; gesture = null; pointers.clear(); release(); } };
 }
 
 function renderRecord(record) {
@@ -400,26 +555,8 @@ function renderRecord(record) {
   open.setAttribute('aria-label', `${record.name}の詳細を表示`);
   open.addEventListener('click', () => navigate('detail', record.id));
   card.append(open);
-  const photo = document.createElement('div');
-  photo.className = 'record-photo';
-  photo.textContent = '写真なし';
-  if (record.photo instanceof Blob && record.photo.type.startsWith('image/')) {
-    const image = document.createElement('img');
-    const url = URL.createObjectURL(record.photo);
-    listPhotoUrls.add(url);
-    image.alt = `${record.name}の写真`;
-    image.addEventListener('load', () => {
-      photo.classList.add('has-photo');
-    }, { once: true });
-    image.addEventListener('error', () => {
-      photo.classList.remove('has-photo');
-      photo.textContent = '写真を表示できません';
-      URL.revokeObjectURL(url);
-      listPhotoUrls.delete(url);
-    }, { once: true });
-    image.src = url;
-    photo.replaceChildren(image);
-  }
+  const viewer = createPhotoViewer(record, { list: true, onTap: () => navigate('detail', record.id) });
+  listPhotoViewers.add(viewer);
   const name = document.createElement('h3');
   name.textContent = record.name;
   const day = document.createElement('time');
@@ -436,7 +573,7 @@ function renderRecord(record) {
     info.append(impression);
   }
   info.append(day);
-  card.append(photo, info);
+  card.append(viewer.element, info);
   const edit = document.createElement('button');
   edit.type = 'button';
   edit.className = 'secondary-button edit-button';
@@ -640,6 +777,8 @@ wishForm.addEventListener('submit', async (event) => {
 });
 
 function clearDetail() {
+  detailPhotoViewer?.dispose();
+  detailPhotoViewer = null;
   detailScreen.hidden = true;
   detailContent.replaceChildren();
   detailContent.hidden = true;
@@ -670,23 +809,8 @@ async function showDetail(route, version, focus) {
     if (version !== routeVersion) return;
     const record = records.find((item) => item.id === route.recordId);
     if (!record) throw new Error('この記録は存在しません。');
-    const photo = document.createElement('div');
-    photo.className = 'detail-photo';
-    photo.textContent = '写真なし';
-    if (record.photo instanceof Blob && record.photo.type.startsWith('image/')) {
-      const image = document.createElement('img');
-      const url = URL.createObjectURL(record.photo);
-      detailPhotoUrl = url;
-      image.alt = `${record.name}の写真`;
-      image.addEventListener('error', () => {
-        if (detailPhotoUrl !== url) return;
-        photo.textContent = '写真を表示できません';
-        URL.revokeObjectURL(url);
-        detailPhotoUrl = null;
-      }, { once: true });
-      image.src = url;
-      photo.replaceChildren(image);
-    }
+    detailPhotoViewer = createPhotoViewer(record);
+    const photo = detailPhotoViewer.element;
     const name = document.createElement('h3');
     name.textContent = record.name;
     const day = document.createElement('time');
@@ -720,40 +844,64 @@ detailBack.addEventListener('click', () => {
 
 function clearPreview() {
   ++previewVersion;
-  photoPreview.hidden = true;
-  photoPlaceholder.hidden = false;
-  photoPreview.onload = null;
-  photoPreview.onerror = null;
-  photoPreview.removeAttribute('src');
-  if (previewUrl) URL.revokeObjectURL(previewUrl);
-  previewUrl = null;
+  photoPreviews.replaceChildren();
+  previewUrls.forEach((url) => URL.revokeObjectURL(url));
+  previewUrls.clear();
 }
 
 function showPreview() {
   clearPreview();
-  removePhotoButton.hidden = !selectedPhoto;
-  if (!selectedPhoto) return;
   const version = previewVersion;
-  previewUrl = URL.createObjectURL(selectedPhoto);
-  photoPreview.onload = () => {
-    if (version === previewVersion) {
-      photoPreview.hidden = false;
-      photoPlaceholder.hidden = true;
-    }
-  };
-  photoPreview.onerror = () => {
-    if (version !== previewVersion) return;
-    clearPreview();
-    // 表示できない既存写真も、ユーザーが削除・変更しない限り保持する。
-    photoError.textContent = '画像を表示できません。必要に応じて変更または削除してください。';
-  };
-  photoPreview.src = previewUrl;
+  if (!selectedPhotos.length) photoPreviews.textContent = '写真なし';
+  selectedPhotos.forEach((photo, index) => {
+    const item = document.createElement('div');
+    item.className = 'photo-preview-item';
+    const area = document.createElement('div');
+    area.className = 'preview-area';
+    const image = document.createElement('img');
+    image.className = 'photo-preview';
+    image.alt = `選択した写真${index + 1}`;
+    const url = URL.createObjectURL(photo);
+    previewUrls.add(url);
+    image.addEventListener('error', () => {
+      if (version !== previewVersion) return;
+      area.textContent = '画像を表示できません';
+      URL.revokeObjectURL(url);
+      previewUrls.delete(url);
+    }, { once: true });
+    image.src = url;
+    area.append(image);
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'secondary-button remove-photo-button';
+    remove.textContent = '×';
+    remove.setAttribute('aria-label', `写真${index + 1}を削除`);
+    remove.addEventListener('click', () => {
+      if (isBusy() || returningToRecords || isRouteLoading || entryScreen.hidden || version !== previewVersion) return;
+      selectedPhotos = selectedPhotos.filter((_, position) => position !== index);
+      photoInput.value = '';
+      photoError.textContent = '';
+      registrationResult.textContent = '';
+      showPreview();
+      photoInput.focus();
+    });
+    const label = document.createElement('span');
+    label.className = 'note';
+    label.textContent = index === 0 ? '代表写真' : `写真${index + 1}`;
+    item.append(area, remove, label);
+    photoPreviews.append(item);
+  });
+  photoWarnings = photoWarnings.filter((photo) => selectedPhotos.includes(photo));
+  photoWarning.textContent = photoWarnings.length ? '5MiBを超える写真が選択されています。保存できますが、保存容量とバックアップ容量が大きくなります。' : '';
+  syncControls();
 }
 
 function resetEntry() {
   entryBaseline = null;
   editingRecord = null;
-  selectedPhoto = null;
+  selectedPhotos = [];
+  photoWarnings = [];
+  photoWarning.textContent = '';
   nameInput.value = '';
   nameInput.setCustomValidity('');
   impressionInput.value = '';
@@ -763,7 +911,6 @@ function resetEntry() {
   registrationResult.textContent = '';
   registrationResult.classList.remove('is-error');
   clearPreview();
-  removePhotoButton.hidden = true;
   deleteButton.hidden = true;
 }
 
@@ -781,7 +928,7 @@ function openEntry(record = null, preserve = false) {
     nameInput.value = record.name;
     impressionInput.value = record.impression || '';
     dateInput.value = drinkingDay(record) || localDate();
-    selectedPhoto = record.photo || null;
+    selectedPhotos = getRecordPhotos(record);
   }
   if (!preserve) entryBaseline = entryValues();
   entryHeading.textContent = record ? 'お酒を編集する' : 'お酒を記録する';
@@ -805,23 +952,24 @@ backButton.addEventListener('click', () => {
 retryButton.addEventListener('click', () => showRecords(false));
 
 photoInput.addEventListener('change', () => {
+  if (isBusy() || returningToRecords || isRouteLoading || entryScreen.hidden) { photoInput.value = ''; return; }
   photoError.textContent = '';
   registrationResult.textContent = '';
-  const file = photoInput.files[0];
-  if (!file) return;
-  if (!file.type.startsWith('image/')) {
-    photoError.textContent = '画像ファイルを選択してください。';
-    photoInput.value = '';
+  const files = Array.from(photoInput.files);
+  photoInput.value = '';
+  if (!files.length) return;
+  if (selectedPhotos.length + files.length > 3) {
+    photoError.textContent = `写真は最大3枚です。あと${3 - selectedPhotos.length}枚まで追加できます。`;
     return;
   }
-  selectedPhoto = file.slice(0, file.size, file.type);
-  showPreview();
-});
-removePhotoButton.addEventListener('click', () => {
-  selectedPhoto = null;
-  photoInput.value = '';
-  photoError.textContent = '';
-  registrationResult.textContent = '';
+  try {
+    validateRecordPhotos([...selectedPhotos, ...files]);
+  } catch (error) {
+    photoError.textContent = error.message;
+    return;
+  }
+  selectedPhotos = [...selectedPhotos, ...files];
+  photoWarnings.push(...files.filter((photo) => photo.size > 5 * 1024 * 1024));
   showPreview();
 });
 nameInput.addEventListener('input', () => nameInput.setCustomValidity(''));
@@ -835,9 +983,14 @@ registerButton.addEventListener('click', async () => {
   const values = {
     name: nameInput.value.trim(),
     impression: impressionInput.value,
-    photo: selectedPhoto,
+    photo: selectedPhotos[0] ?? null,
     drankOn: dateInput.value,
   };
+  // 写真変更のない旧記録には、空配列を追加するだけの書き換えをしない。
+  const originalPhotos = editingRecord ? getRecordPhotos(editingRecord) : [];
+  if (!editingRecord || Object.hasOwn(editingRecord, 'additionalPhotos') || !samePhotos(originalPhotos, selectedPhotos)) {
+    values.additionalPhotos = selectedPhotos.slice(1);
+  }
   const id = editingRecord?.id;
   const origin = currentRoute;
   isSaving = true;
@@ -922,7 +1075,11 @@ function syncUpdateButton() {
 
 function entryValues() {
   return { name: nameInput.value, impression: impressionInput.value,
-    date: dateInput.value, photo: selectedPhoto };
+    date: dateInput.value, photos: selectedPhotos.slice() };
+}
+
+function samePhotos(left, right) {
+  return left.length === right.length && left.every((photo, index) => photo === right[index]);
 }
 
 function updateBlockReason() {
@@ -933,7 +1090,8 @@ function updateBlockReason() {
   if (failedWish || (wishBaseline && (wishName.value !== wishBaseline.name || wishMemo.value !== wishBaseline.memo))) {
     return '飲みたいお酒に未保存の変更があります。入力内容を保存してから更新してください。';
   }
-  if (failedEntry || (entryBaseline && Object.keys(values).some((key) => values[key] !== entryBaseline[key]))) {
+  if (failedEntry || (entryBaseline && Object.keys(values).some((key) => key === 'photos'
+    ? !samePhotos(values.photos, entryBaseline.photos) : values[key] !== entryBaseline[key]))) {
     return '未保存の変更があります。入力内容を保存してから更新してください。';
   }
   if (document.visibilityState !== 'visible') return 'アプリを表示してから更新してください。';
@@ -1136,14 +1294,15 @@ backupButton.addEventListener('click', async () => {
   let downloadUrl = null;
   try {
     const data = await getBackupData();
-    const file = await createBackupFile(data);
+    let warning = '';
+    const file = await createBackupFile(data, { onWarning: (message) => { warning = message; } });
     downloadUrl = URL.createObjectURL(file);
     const link = document.createElement('a');
     link.href = downloadUrl;
     link.download = `sake-fog-backup-${localDate()}.json`;
     document.body.append(link);
     try { link.click(); } finally { link.remove(); }
-    settingsStatus.textContent = `飲酒記録${data.records.length}件・飲みたいお酒${data.wishlist.length}件のバックアップのダウンロードを開始しました。ファイルが保存されたことを確認してください。`;
+    settingsStatus.textContent = `飲酒記録${data.records.length}件・飲みたいお酒${data.wishlist.length}件のバックアップのダウンロードを開始しました。ファイルが保存されたことを確認してください。${warning ? ` ${warning}` : ''}`;
   } catch (error) {
     settingsStatus.classList.add('error-message');
     settingsStatus.textContent = `バックアップを作成できませんでした。${error.message}`;

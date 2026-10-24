@@ -85,44 +85,58 @@ function photoFromBackup(photo) {
   return new Blob([bytes], { type: photo.mimeType });
 }
 
-async function createBackupFile({ records, wishlist }) {
+async function createBackupFile({ records, wishlist }, { onWarning = () => {} } = {}) {
   if (!Array.isArray(records) || !Array.isArray(wishlist)) throw new Error('バックアップ対象の一覧が無効です。');
   const converted = [];
   const ids = new Set();
-  let estimatedBytes = 0;
+  let photoBytes = 0;
   for (const record of records) {
     validateRecord(record, ids);
-    const { photo, ...metadata } = record;
+    const { photo, additionalPhotos, ...metadata } = record;
     assertJsonValue(metadata);
-    if (photo !== null && (!(photo instanceof Blob) || !photo.type.startsWith('image/') || !photo.size)) {
-      throw new Error(`ID ${record.id}：写真データが無効です。`);
-    }
-    estimatedBytes += new Blob([JSON.stringify(metadata)]).size + (photo ? 4 * Math.ceil(photo.size / 3) : 0);
-    if (estimatedBytes > MAX_BACKUP_BYTES) throw new Error('バックアップが50MBを超えます。今回は作成できません。');
+    const photos = getRecordPhotos(record);
+    const placeholder = (image) => {
+      photoBytes += 4 * Math.ceil(image.size / 3);
+      return { mimeType: image.type, base64: '' };
+    };
     converted.push({
       ...metadata,
-      photo: photo === null ? null : { mimeType: photo.type, base64: await blobToBase64(photo) },
+      photo: photos.length ? placeholder(photos[0]) : null,
+      additionalPhotos: photos.slice(1).map(placeholder),
     });
   }
   const wishIds = new Set();
   wishlist.forEach((item) => validateWishlistItem(item, wishIds));
-  const backup = { format: 'sake-fog-backup', formatVersion: 2, createdAt: new Date().toISOString(), records: converted, wishlist };
+  const backup = { format: 'sake-fog-backup', formatVersion: 3, createdAt: new Date().toISOString(), records: converted, wishlist };
+  // Base64の文字数とメタデータから出力サイズを計算し、巨大な変換の前に拒否する。
+  const expectedBytes = new Blob([JSON.stringify(backup)]).size + photoBytes;
+  if (expectedBytes > MAX_BACKUP_BYTES) {
+    throw new Error('バックアップが50MiBを超えるため作成できません。既存データは変更していません。不完全なファイルは出力していません。');
+  }
+  for (let index = 0; index < records.length; index++) {
+    const photos = getRecordPhotos(records[index]);
+    const targets = converted[index].photo === null ? [] : [converted[index].photo, ...converted[index].additionalPhotos];
+    for (let position = 0; position < photos.length; position++) {
+      targets[position].base64 = await blobToBase64(photos[position]);
+    }
+  }
   const file = new Blob([JSON.stringify(backup)], { type: 'application/json' });
-  if (file.size > MAX_BACKUP_BYTES) throw new Error('バックアップが50MBを超えます。今回は作成できません。');
+  if (file.size > MAX_BACKUP_BYTES) throw new Error('バックアップが50MiBを超えるため作成できません。不完全なファイルは出力していません。');
+  if (file.size >= MAX_BACKUP_BYTES * 0.9) onWarning('バックアップが45MiB以上になり、50MiBの上限に近づいています。');
   return file;
 }
 
 async function readBackupFile(file) {
-  if (file.size > MAX_BACKUP_BYTES) throw new Error('ファイルが大きすぎます。50MB以下のバックアップを選択してください。');
+  if (file.size > MAX_BACKUP_BYTES) throw new Error('ファイルが大きすぎます。50MiB以下のバックアップを選択してください。');
   let backup;
   try {
     backup = JSON.parse(await file.text());
   } catch {
     throw new Error('JSONファイルを読み取れません。正しいバックアップを選択してください。');
   }
-  if (!isPlainObject(backup) || backup.format !== 'sake-fog-backup' || ![1, 2].includes(backup.formatVersion)
+  if (!isPlainObject(backup) || backup.format !== 'sake-fog-backup' || ![1, 2, 3].includes(backup.formatVersion)
     || !isValidTimestamp(backup.createdAt) || !Array.isArray(backup.records)
-    || (backup.formatVersion === 2 && !Array.isArray(backup.wishlist))) {
+    || (backup.formatVersion !== 1 && !Array.isArray(backup.wishlist))) {
     throw new Error('バックアップの形式・バージョン・作成日時が無効です。');
   }
   const ids = new Set();
@@ -130,6 +144,23 @@ async function readBackupFile(file) {
   const records = backup.records.map((record) => {
     validateRecord(record, ids);
     assertJsonValue(record);
+    if (backup.formatVersion === 3) {
+      if (!Array.isArray(record.additionalPhotos) || record.additionalPhotos.length > 2) {
+        throw new Error('追加写真の配列が無効です。写真は代表写真を含め最大3枚です。');
+      }
+      const result = { ...record, photo: photoFromBackup(record.photo),
+        additionalPhotos: record.additionalPhotos.map((photo) => {
+          if (photo === null) throw new Error('追加写真に空の写真が含まれています。');
+          return photoFromBackup(photo);
+        }) };
+      getRecordPhotos(result);
+      return result;
+    }
+    // 旧形式に追加写真が紛れていたら、黙って失う代わりに拒否する。
+    if (Object.hasOwn(record, 'additionalPhotos')
+      && (!Array.isArray(record.additionalPhotos) || record.additionalPhotos.length)) {
+      throw new Error('追加写真を含むバックアップには形式3が必要です。');
+    }
     return { ...record, photo: photoFromBackup(record.photo) };
   });
   if (backup.formatVersion === 1) return { formatVersion: 1, records };
@@ -138,5 +169,5 @@ async function readBackupFile(file) {
     validateWishlistItem(item, wishIds);
     return { ...item };
   });
-  return { formatVersion: 2, records, wishlist };
+  return { formatVersion: backup.formatVersion, records, wishlist };
 }

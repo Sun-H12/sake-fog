@@ -47,17 +47,72 @@ async function getRecords() {
   }
 }
 
+// 読み取り時は旧記録を書き換えず、追加写真の省略を空配列として扱う。
+function getRecordPhotos(record) {
+  const additional = record.additionalPhotos === undefined ? [] : record.additionalPhotos;
+  if (!Array.isArray(additional) || additional.length > 2 || (record.photo == null && additional.length)) {
+    throw new Error('写真の構成が無効です。代表写真と追加写真を確認してください。');
+  }
+  const photos = record.photo == null ? [] : [record.photo, ...additional];
+  validateRecordPhotos(photos);
+  return photos;
+}
+
+function validateRecordPhotos(photos) {
+  if (!Array.isArray(photos) || photos.length > 3 || new Set(photos).size !== photos.length
+    || Array.from(photos).some((photo) => !(photo instanceof Blob) || !photo.size
+      || !/^image\/[a-z0-9!#$&^_.+\-]+$/i.test(photo.type))) {
+    throw new Error('写真は最大3枚です。空の写真・無効な画像データ・同じBlobの重複は保存できません。');
+  }
+}
+
+// 削除・追加後の順序から代表写真を決める。元の記録・Blobは変更しない。
+function recordWithPhotos(record, photos) {
+  validateRecordPhotos(photos);
+  return { ...record, photo: photos[0] ?? null, additionalPhotos: photos.slice(1) };
+}
+
+function removeRecordPhoto(record, index) {
+  const photos = getRecordPhotos(record);
+  if (!Number.isInteger(index) || index < 0 || index >= photos.length) throw new Error('削除対象の写真が無効です。');
+  return recordWithPhotos(record, photos.filter((_, position) => position !== index));
+}
+
+function getRecordPhotoWarnings(record) {
+  return getRecordPhotos(record).flatMap((photo, index) => photo.size > 5 * 1024 * 1024
+    ? [`写真${index + 1}は5MiBを超えます。保存できますが、保存容量とバックアップ容量が大きくなります。`] : []);
+}
+
 async function saveRecord(values, id) {
   const database = await openDatabase();
   try {
     await new Promise((resolve, reject) => {
       const transaction = database.transaction('records', 'readwrite');
       const store = transaction.objectStore('records');
+      let failure = null;
       transaction.oncomplete = () => resolve();
-      transaction.onabort = () => reject(transaction.error || new Error('保存が中断されました。'));
-      transaction.onerror = () => reject(transaction.error || new Error('保存に失敗しました。'));
+      const saveError = () => (failure || transaction.error)?.name === 'QuotaExceededError'
+        ? new Error('保存容量が不足しています。既存の記録と写真は変更していません。入力内容を保持したまま再試行できます。')
+        : failure || transaction.error || new Error('保存に失敗しました。');
+      transaction.onabort = () => reject(saveError());
+      transaction.onerror = (event) => { failure ||= event.target.error || transaction.error; };
+      const write = (record) => {
+        try {
+          if (Object.hasOwn(record, 'additionalPhotos')) {
+            if (!Array.isArray(record.additionalPhotos)) throw new Error('追加写真の配列が無効です。');
+            // 旧UIで代表写真だけを削除した場合も、追加写真を失わず繰り上げる。
+            record = recordWithPhotos(record, record.photo == null
+              ? record.additionalPhotos : [record.photo, ...record.additionalPhotos]);
+          } else validateRecordPhotos(record.photo == null ? [] : [record.photo]);
+          if (id == null) store.add(record);
+          else store.put(record);
+        } catch (error) {
+          failure = error;
+          transaction.abort();
+        }
+      };
       if (id == null) {
-        store.add({ ...values, createdAt: new Date().toISOString() });
+        write({ ...values, createdAt: new Date().toISOString() });
       } else {
         // 同じトランザクションで存在確認し、ID・登録日時・既存の追加項目を保持する。
         const request = store.get(id);
@@ -66,7 +121,7 @@ async function saveRecord(values, id) {
             transaction.abort();
             return;
           }
-          store.put({ ...request.result, ...values, updatedAt: new Date().toISOString() });
+          write({ ...request.result, ...values, updatedAt: new Date().toISOString() });
         };
       }
     });
@@ -253,10 +308,14 @@ async function getBackupCounts() {
 }
 
 async function replaceBackupData(data, expectedCounts) {
-  if (![1, 2].includes(data?.formatVersion) || !Array.isArray(data.records)
-    || (data.formatVersion === 2 && !Array.isArray(data.wishlist))) {
+  if (![1, 2, 3].includes(data?.formatVersion) || !Array.isArray(data.records)
+    || (data.formatVersion !== 1 && !Array.isArray(data.wishlist))) {
     throw new Error('復元データの形式が無効です。');
   }
+  data.records.forEach((record) => {
+    if (data.formatVersion === 3 && !Array.isArray(record.additionalPhotos)) throw new Error('追加写真の配列が無効です。');
+    getRecordPhotos(record);
+  });
   // 旧形式にwishlistがないことは、空のリストを意味しない。
   if (data.formatVersion === 1) return replaceRecords(data.records, expectedCounts.records);
   const database = await openDatabase();
