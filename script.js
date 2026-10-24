@@ -24,6 +24,11 @@ const deleteButton = document.getElementById('delete-record');
 const deleteLabel = document.getElementById('delete-label');
 const settingsScreen = document.getElementById('settings-screen');
 const settingsBack = document.getElementById('settings-back');
+const detailScreen = document.getElementById('detail-screen');
+const detailBack = document.getElementById('detail-back');
+const detailContent = document.getElementById('detail-content');
+const detailStatus = document.getElementById('detail-status');
+let detailPhotoUrl = null;
 const backupButton = document.getElementById('create-backup');
 const restoreButton = document.getElementById('restore-backup');
 const restoreFile = document.getElementById('restore-file');
@@ -80,8 +85,8 @@ function makeRoute(screen, recordId) {
 function isAppRoute(route) {
   return route?.app === 'sake-fog' && route.version === 1
     && typeof route.key === 'string'
-    && ['records', 'new', 'edit', 'settings'].includes(route.screen)
-    && (route.screen !== 'edit' || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
+    && ['records', 'new', 'edit', 'settings', 'detail'].includes(route.screen)
+    && (!['edit', 'detail'].includes(route.screen) || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
 }
 
 function isBusy() {
@@ -93,9 +98,11 @@ function syncControls() {
   entryControls.forEach((control) => { control.disabled = blocked; });
   [backupButton, restoreButton, restoreFile, settingsBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
-    ...recordsList.querySelectorAll('.edit-button')].forEach((control) => {
+    ...recordsList.querySelectorAll('.edit-button, .record-open')].forEach((control) => {
     control.disabled = blocked;
   });
+  // 詳細の読み込み中も戻れるようにする。
+  detailBack.disabled = isBusy() || returningToRecords;
   syncUpdateButton();
 }
 
@@ -110,6 +117,7 @@ function notifyList(message, error = false) {
 function navigate(screen, recordId) {
   if (isBusy() || returningToRecords || isRouteLoading || currentRoute.screen !== 'records') return;
   const route = makeRoute(screen, recordId);
+  if (!isAppRoute(route)) return;
   history.pushState(route, '');
   currentRoute = route;
   listNotice = null;
@@ -135,6 +143,8 @@ async function renderRoute(focus = true) {
       entryRoute = null;
     }
     await showRecords(focus);
+  } else if (route.screen === 'detail') {
+    await showDetail(route, version, focus);
   } else if (route.screen === 'settings') {
     // 処理中に「進む」で戻っても進捗・結果を消さない。
     showSettings(isBackupBusy);
@@ -274,6 +284,13 @@ function clearRecordsList() {
 function renderRecord(record) {
   const card = document.createElement('article');
   card.className = 'record-card';
+  // 編集ボタンと兄弟のボタンにして、入れ子やクリックの伝播競合を避ける。
+  const open = document.createElement('button');
+  open.type = 'button';
+  open.className = 'record-open';
+  open.setAttribute('aria-label', `${record.name}の詳細を表示`);
+  open.addEventListener('click', () => navigate('detail', record.id));
+  card.append(open);
   const photo = document.createElement('div');
   photo.className = 'record-photo';
   photo.textContent = '写真なし';
@@ -328,6 +345,7 @@ function renderRecord(record) {
 }
 
 async function showRecords(focus = true) {
+  clearDetail();
   const version = ++listRequestVersion;
   entryScreen.hidden = true;
   settingsScreen.hidden = true;
@@ -359,6 +377,84 @@ async function showRecords(focus = true) {
     console.error('記録の取得に失敗しました:', error);
   }
 }
+
+function clearDetail() {
+  detailScreen.hidden = true;
+  detailContent.replaceChildren();
+  detailContent.hidden = true;
+  if (detailPhotoUrl) URL.revokeObjectURL(detailPhotoUrl);
+  detailPhotoUrl = null;
+}
+
+async function showDetail(route, version, focus) {
+  ++listRequestVersion;
+  clearDetail();
+  clearPreview();
+  clearRecordsList();
+  hideToast();
+  entryScreen.hidden = true;
+  settingsScreen.hidden = true;
+  recordsScreen.hidden = true;
+  appHeader.hidden = true;
+  detailScreen.hidden = false;
+  document.body.classList.remove('entry-mode');
+  detailStatus.textContent = '記録を読み込んでいます…';
+  isRouteLoading = true;
+  syncControls();
+  if (focus) document.getElementById('detail-heading').focus();
+  window.scrollTo(0, 0);
+  try {
+    const records = await getRecords();
+    if (version !== routeVersion) return;
+    const record = records.find((item) => item.id === route.recordId);
+    if (!record) throw new Error('この記録は存在しません。');
+    const photo = document.createElement('div');
+    photo.className = 'detail-photo';
+    photo.textContent = '写真なし';
+    if (record.photo instanceof Blob && record.photo.type.startsWith('image/')) {
+      const image = document.createElement('img');
+      const url = URL.createObjectURL(record.photo);
+      detailPhotoUrl = url;
+      image.alt = `${record.name}の写真`;
+      image.addEventListener('error', () => {
+        if (detailPhotoUrl !== url) return;
+        photo.textContent = '写真を表示できません';
+        URL.revokeObjectURL(url);
+        detailPhotoUrl = null;
+      }, { once: true });
+      image.src = url;
+      photo.replaceChildren(image);
+    }
+    const name = document.createElement('h3');
+    name.textContent = record.name;
+    const day = document.createElement('time');
+    const date = drinkingDay(record);
+    if (date) day.dateTime = date;
+    day.textContent = `飲んだ日：${date ? date.replaceAll('-', '/') : '不明'}`;
+    detailContent.append(photo, name, day);
+    if (typeof record.impression === 'string' && record.impression.trim() !== '') {
+      const impression = document.createElement('p');
+      impression.className = 'detail-impression';
+      impression.textContent = record.impression;
+      detailContent.append(impression);
+    }
+    detailContent.hidden = false;
+    detailStatus.textContent = '';
+  } catch (error) {
+    if (version !== routeVersion) return;
+    notifyList(`詳細画面を開けませんでした。${error.message}`, true);
+    returnToRecords();
+  } finally {
+    if (version === routeVersion) {
+      isRouteLoading = false;
+      syncControls();
+    }
+  }
+}
+
+detailBack.addEventListener('click', () => {
+  if (!isBusy()) returnToRecords();
+});
 
 function clearPreview() {
   ++previewVersion;
@@ -410,6 +506,7 @@ function resetEntry() {
 }
 
 function openEntry(record = null, preserve = false) {
+  clearDetail();
   ++listRequestVersion;
   if (!preserve) {
     resetEntry();
@@ -529,6 +626,7 @@ deleteButton.addEventListener('click', async () => {
 });
 
 function showSettings(preserve = false) {
+  clearDetail();
   ++listRequestVersion;
   hideToast();
   clearRecordsList();
