@@ -12,8 +12,13 @@ const recordsScreen = document.getElementById('records-screen');
 const recordsList = document.getElementById('records-list');
 const wishScreen = document.getElementById('wish-entry-screen');
 const wishForm = document.getElementById('wish-form');
-const wishName = document.getElementById('wish-name');
-const wishMemo = document.getElementById('wish-memo');
+let wishName = document.getElementById('wish-name');
+let wishMemo = document.getElementById('wish-memo');
+const wishGroups = document.getElementById('wish-groups');
+const firstWishGroup = wishGroups.firstElementChild;
+const wishAddGroup = document.getElementById('wish-add-group');
+const wishGroupLimit = document.getElementById('wish-group-limit');
+let nextWishGroupKey = 1;
 const wishSave = document.getElementById('wish-save');
 const wishBack = document.getElementById('wish-back');
 const wishResult = document.getElementById('wish-result');
@@ -126,6 +131,8 @@ function isBusy() {
 function syncControls() {
   const blocked = isBusy() || returningToRecords || isRouteLoading;
   entryControls.forEach((control) => { control.disabled = blocked; });
+  wishGroups.querySelectorAll('input, textarea, button').forEach((control) => { control.disabled = blocked; });
+  wishAddGroup.disabled = blocked || currentRoute.screen !== 'wish-new' || wishGroups.children.length >= 20;
   photoInput.disabled = blocked || selectedPhotos.length >= 3;
   photoPreviews.querySelectorAll('.remove-photo-button').forEach((button) => { button.disabled = blocked; });
   [backupButton, restoreButton, restoreFile, settingsBack,
@@ -157,7 +164,9 @@ function navigate(screen, recordId, initialName) {
   // 名前を引き継いだ登録は、別の新規登録として扱う。
   const retryNew = screen === 'new' && initialName === undefined && failedEntry
     && entryRoute?.screen === 'new' && !Object.hasOwn(entryRoute, 'initialName');
-  const route = retryNew ? { ...entryRoute, list: currentRoute.list } : makeRoute(screen, recordId, initialName);
+  const retryWish = screen === 'wish-new' && failedWish && wishRoute?.screen === 'wish-new';
+  const route = retryNew ? { ...entryRoute, list: currentRoute.list }
+    : retryWish ? { ...wishRoute, list: currentRoute.list } : makeRoute(screen, recordId, initialName);
   if (!isAppRoute(route)) return;
   // キャンセル時に、失敗したフォームへ「進む」ための履歴を失わない。
   const discardNew = screen === 'new' && failedEntry && entryRoute?.key !== route.key;
@@ -190,7 +199,8 @@ async function renderRoute(focus = true) {
     }
     await showRecords(focus);
   } else if (['wish-new', 'wish-edit'].includes(route.screen)) {
-    const sameTarget = wishRoute?.screen === route.screen && wishRoute.recordId === route.recordId;
+    const sameTarget = wishRoute?.screen === route.screen && wishRoute.recordId === route.recordId
+      && (route.screen !== 'wish-new' || wishRoute.key === route.key);
     // 書き込み中の「進む」で別のフォームに入力状態を移さない。
     if (isSaving && !sameTarget) {
       returnToRecords();
@@ -313,7 +323,7 @@ const toastMessages = {
   'wish-updated': {
     title: '飲みたいお酒を更新しました',
     description: '変更内容を保存しました',
-    icon: 'M5 12l4 4L19 6',
+    icon: 'M15 5l4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z',
   },
   'wish-created': {
     title: '飲みたいお酒を登録しました',
@@ -359,7 +369,7 @@ function hideToast() {
   toastDescription.textContent = '';
 }
 
-function showToast(type) {
+function showToast(type, count = 1) {
   const message = toastMessages[type];
   if (!message) return;
   hideToast();
@@ -367,7 +377,7 @@ function showToast(type) {
   // 連続通知でも登場アニメーションを最初から再生する。
   void saveNotice.offsetWidth;
   saveNotice.dataset.type = type;
-  toastTitle.textContent = message.title;
+  toastTitle.textContent = type === 'wish-created' && count > 1 ? `飲みたいお酒を${count}件登録しました` : message.title;
   toastDescription.textContent = message.description;
   toastIconPath.setAttribute('d', message.icon);
   saveNotice.hidden = false;
@@ -662,28 +672,34 @@ function renderWish(item) {
   const create = document.createElement('button');
   create.type = 'button';
   create.className = 'secondary-button wish-create-record';
-  create.textContent = '飲酒記録を作成';
   create.setAttribute('aria-label', `${item.name}の飲酒記録を作成`);
+  create.title = create.getAttribute('aria-label');
   create.addEventListener('click', () => navigate('new', undefined, item.name));
-  actions.append(create);
   const edit = document.createElement('button');
   edit.type = 'button';
   edit.className = 'secondary-button wish-edit';
   edit.setAttribute('aria-label', `${item.name}を編集`);
+  edit.title = edit.getAttribute('aria-label');
   const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   icon.setAttribute('viewBox', '0 0 24 24');
   icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
   const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   path.setAttribute('d', 'M15 5l4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z');
   icon.append(path);
   edit.append(icon);
+  const createIcon = icon.cloneNode(true);
+  createIcon.querySelector('path').setAttribute('d', 'M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12M7 7h4M7 11h2M14 17l-4 1 1-4 8-8 3 3-8 8M17 8l3 3');
+  create.append(createIcon);
   edit.addEventListener('click', () => navigate('wish-edit', item.id));
-  actions.append(edit);
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'secondary-button wish-delete';
-  remove.textContent = '削除';
   remove.setAttribute('aria-label', `${item.name}を飲みたいリストから削除`);
+  remove.title = remove.getAttribute('aria-label');
+  const removeIcon = icon.cloneNode(true);
+  removeIcon.querySelector('path').setAttribute('d', 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7');
+  remove.append(removeIcon);
   remove.addEventListener('click', async () => {
     if (isBusy() || returningToRecords || isRouteLoading || recordsScreen.hidden || currentRoute.list !== 'wishlist') return;
     if (!window.confirm(`「${item.name}」を飲みたいリストから削除しますか？`)) return;
@@ -700,18 +716,64 @@ function renderWish(item) {
       finishOperation();
     }
   });
-  actions.append(remove);
+  actions.append(create, remove, edit);
   card.append(actions);
   return card;
+}
+
+function wishValues() {
+  return Array.from(wishGroups.children, (group) => ({
+    name: group.querySelector('.wish-name-input').value,
+    memo: group.querySelector('.wish-memo-input').value,
+  }));
+}
+
+function refreshWishGroups() {
+  const editing = currentRoute.screen === 'wish-edit';
+  wishForm.classList.toggle('is-wish-edit', editing);
+  Array.from(wishGroups.children).forEach((group, index) => {
+    const name = group.querySelector('.wish-name-input');
+    const memo = group.querySelector('.wish-memo-input');
+    const error = group.querySelector('.wish-name-error');
+    name.id = index === 0 ? 'wish-name' : `wish-name-${group.dataset.key}`;
+    memo.id = index === 0 ? 'wish-memo' : `wish-memo-${group.dataset.key}`;
+    error.id = `${name.id}-error`;
+    name.setAttribute('aria-describedby', error.id);
+    group.querySelector('.wish-name-label').htmlFor = name.id;
+    group.querySelector('.wish-memo-label').htmlFor = memo.id;
+    const title = group.querySelector('.wish-group-title');
+    title.id = `wish-group-title-${group.dataset.key}`;
+    title.textContent = `お酒${index + 1}`;
+    group.setAttribute('aria-labelledby', title.id);
+    group.querySelector('.wish-group-header').hidden = editing;
+    const remove = group.querySelector('.wish-remove-group');
+    remove.hidden = editing || wishGroups.children.length === 1;
+    remove.setAttribute('aria-label', `お酒${index + 1}の入力欄を削除`);
+  });
+  wishName = wishGroups.querySelector('.wish-name-input');
+  wishMemo = wishGroups.querySelector('.wish-memo-input');
+  wishAddGroup.hidden = editing;
+  wishGroupLimit.hidden = editing;
+  wishGroupLimit.textContent = `${wishGroups.children.length}件入力中 / 最大20件まで${wishGroups.children.length >= 20 ? '（上限に達しました）' : ''}`;
+  syncControls();
+}
+
+function focusWishName(input) {
+  input.focus({ preventScroll: true });
+  input.scrollIntoView({ block: 'center', inline: 'nearest' });
 }
 
 function resetWish() {
   editingWish = null;
   wishRoute = null;
   wishBaseline = null;
-  wishName.value = '';
-  wishName.setCustomValidity('');
-  wishMemo.value = '';
+  wishGroups.replaceChildren(firstWishGroup);
+  firstWishGroup.querySelector('.wish-name-input').value = '';
+  firstWishGroup.querySelector('.wish-memo-input').value = '';
+  firstWishGroup.querySelector('.wish-name-input').setCustomValidity('');
+  firstWishGroup.querySelector('.wish-name-input').removeAttribute('aria-invalid');
+  firstWishGroup.querySelector('.wish-name-error').hidden = true;
+  refreshWishGroups();
   wishResult.textContent = '';
 }
 
@@ -727,7 +789,7 @@ function openWish(item = null, preserve = false) {
     editingWish = item;
     wishName.value = item?.name ?? '';
     wishMemo.value = item?.memo ?? '';
-    wishBaseline = { name: wishName.value, memo: wishMemo.value };
+    wishBaseline = wishValues();
   }
   document.getElementById('wish-heading').textContent = editingWish ? '飲みたいお酒を編集' : '飲みたいお酒を登録';
   wishSave.textContent = isSaving ? '保存中…' : editingWish ? '保存する' : '登録する';
@@ -742,14 +804,57 @@ function openWish(item = null, preserve = false) {
 }
 
 wishBack.addEventListener('click', () => { if (!isBusy()) returnToRecords(); });
-wishName.addEventListener('input', () => wishName.setCustomValidity(''));
-wishForm.addEventListener('input', () => { wishResult.textContent = ''; });
+wishForm.addEventListener('input', (event) => {
+  wishResult.textContent = '';
+  if (event.target.matches('.wish-name-input')) {
+    event.target.setCustomValidity('');
+    event.target.removeAttribute('aria-invalid');
+    event.target.closest('.wish-group').querySelector('.wish-name-error').hidden = true;
+  }
+});
+wishAddGroup.addEventListener('click', () => {
+  if (isBusy() || returningToRecords || isRouteLoading || wishScreen.hidden
+    || currentRoute.screen !== 'wish-new' || wishGroups.children.length >= 20) return;
+  const group = firstWishGroup.cloneNode(true);
+  group.dataset.key = String(nextWishGroupKey++);
+  group.querySelectorAll('input, textarea').forEach((input) => { input.value = ''; });
+  group.querySelector('input').setCustomValidity('');
+  group.querySelector('input').removeAttribute('aria-invalid');
+  group.querySelector('.wish-name-error').hidden = true;
+  wishGroups.append(group);
+  wishResult.textContent = '';
+  refreshWishGroups();
+  focusWishName(group.querySelector('.wish-name-input'));
+});
+wishGroups.addEventListener('click', (event) => {
+  const button = event.target.closest('.wish-remove-group');
+  if (!button || isBusy() || returningToRecords || isRouteLoading || wishScreen.hidden
+    || currentRoute.screen !== 'wish-new' || wishGroups.children.length <= 1) return;
+  const group = button.closest('.wish-group');
+  const name = group.querySelector('.wish-name-input').value;
+  const memo = group.querySelector('.wish-memo-input').value;
+  if ((name !== '' || memo !== '') && !window.confirm('このお酒の入力内容を削除しますか？')) return;
+  const next = group.nextElementSibling || group.previousElementSibling;
+  group.remove();
+  wishResult.textContent = '';
+  refreshWishGroups();
+  focusWishName(next.querySelector('.wish-name-input'));
+});
 wishForm.addEventListener('submit', async (event) => {
   event.preventDefault();
   if (isBusy() || returningToRecords || isRouteLoading || wishScreen.hidden) return;
-  wishName.setCustomValidity(wishName.value.trim() ? '' : 'お酒の名前を入力してください。');
-  if (!wishName.reportValidity()) return;
-  const values = { name: wishName.value, memo: wishMemo.value };
+  let firstError = null;
+  wishGroups.querySelectorAll('.wish-name-input').forEach((input) => {
+    const message = input.value.trim() ? '' : 'お酒の名前を入力してください。';
+    input.setCustomValidity(message);
+    input.setAttribute('aria-invalid', String(!!message));
+    const error = input.closest('.wish-group').querySelector('.wish-name-error');
+    error.textContent = message;
+    error.hidden = !message;
+    if (message && !firstError) firstError = input;
+  });
+  if (firstError) { focusWishName(firstError); return; }
+  const values = wishValues();
   const origin = currentRoute;
   const id = editingWish?.id;
   if (origin.screen === 'wish-edit' && id !== origin.recordId) return;
@@ -758,11 +863,12 @@ wishForm.addEventListener('submit', async (event) => {
   wishSave.textContent = '保存中…';
   syncControls();
   try {
-    await saveWishlistItem(values, id);
+    if (id == null) await saveWishlistItems(values);
+    else await saveWishlistItem(values[0], id);
     failedWish = false;
     resetWish();
     listNotice = null;
-    showToast(id == null ? 'wish-created' : 'wish-updated');
+    showToast(id == null ? 'wish-created' : 'wish-updated', values.length);
     if (currentRoute.key === origin.key) returnToRecords();
   } catch (error) {
     failedWish = true;
@@ -1087,7 +1193,7 @@ function updateBlockReason() {
   if (isRouteLoading || returningToRecords
     || (isApplyingUpdate && updateRouteVersion !== routeVersion)) return '画面の移動が終わってから更新してください。';
   const values = entryValues();
-  if (failedWish || (wishBaseline && (wishName.value !== wishBaseline.name || wishMemo.value !== wishBaseline.memo))) {
+  if (failedWish || (wishBaseline && JSON.stringify(wishValues()) !== JSON.stringify(wishBaseline))) {
     return '飲みたいお酒に未保存の変更があります。入力内容を保存してから更新してください。';
   }
   if (failedEntry || (entryBaseline && Object.keys(values).some((key) => key === 'photos'

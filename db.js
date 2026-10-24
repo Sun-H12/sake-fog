@@ -237,6 +237,41 @@ async function saveWishlistItem(values, id) {
   } finally { database.close(); }
 }
 
+// 新規登録専用。全件の検証後に一つのトランザクションで追加する。
+async function saveWishlistItems(items) {
+  if (!Array.isArray(items) || items.length < 1 || items.length > 20) {
+    throw new Error('飲みたいお酒は1〜20件で登録してください。');
+  }
+  const values = Array.from(items, (item) => {
+    if (typeof item?.name !== 'string' || !item.name.trim()
+      || (item.memo !== undefined && typeof item.memo !== 'string')) {
+      throw new Error('飲みたいお酒の名前またはメモが無効です。');
+    }
+    return { name: item.name.trim(), memo: item.memo ?? '', createdAt: new Date().toISOString() };
+  });
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction('wishlist', 'readwrite');
+      const store = transaction.objectStore('wishlist');
+      const ids = [];
+      let failure = null;
+      transaction.oncomplete = () => resolve(ids);
+      transaction.onabort = () => reject(failure || transaction.error || new Error('登録が中断されました。すべての入力を保持しています。'));
+      transaction.onerror = (event) => { failure ||= event.target.error || transaction.error; };
+      try {
+        values.forEach((value, index) => {
+          const request = store.add(value);
+          request.onsuccess = () => { ids[index] = request.result; };
+        });
+      } catch (error) {
+        failure = error;
+        transaction.abort();
+      }
+    });
+  } finally { database.close(); }
+}
+
 async function getWishlistItem(id) {
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error('編集対象のIDが無効です。');
   const database = await openDatabase();

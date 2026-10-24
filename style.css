@@ -626,13 +626,13 @@ textarea {
 }
 
 .toast[data-type="created"] .toast-icon,
-.toast[data-type="wish-created"] .toast-icon,
-.toast[data-type="wish-updated"] .toast-icon {
+.toast[data-type="wish-created"] .toast-icon {
   background: var(--success-bg);
   color: var(--success-text);
 }
 
-.toast[data-type="updated"] .toast-icon {
+.toast[data-type="updated"] .toast-icon,
+.toast[data-type="wish-updated"] .toast-icon {
   background: var(--info-bg);
   color: var(--info-text);
 }
@@ -807,17 +807,17 @@ textarea {
   width: 100%;
   min-height: 52px;
   margin-top: 28px;
-  border: 1px solid var(--danger-border);
+  border: 1px solid var(--input-border);
   border-radius: 12px;
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: transparent;
+  color: var(--secondary);
   font-size: 0.875rem;
   font-weight: 400;
 }
 
 .delete-button:hover {
-  background: var(--danger-bg);
-  color: var(--danger-hover);
+  background: var(--subtle);
+  color: var(--secondary);
 }
 
 @media (max-width: 359px) {
@@ -873,11 +873,28 @@ textarea {
 .wish-card { padding: 16px; }
 .wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }
-.wish-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 12px; }
-.wish-create-record { margin-right: auto; min-height: 44px; max-width: 100%; overflow-wrap: anywhere; }
-.wish-edit { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
-.wish-edit svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.wish-delete { color: var(--danger); }
+.wish-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 12px; }
+.wish-actions button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--secondary); }
+.wish-actions svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #wish-save { padding: 10px 12px; font-size: 0.875rem; white-space: nowrap; }
 #wish-result { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
 #wish-result:empty { display: none; }
+#wish-groups { display: grid; gap: 16px; }
+.wish-group { min-width: 0; margin: 0; padding: 0; border: 0; }
+.wish-group-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 44px; margin-bottom: 12px; }
+.wish-group-title { margin: 0; min-width: 0; font-size: 1rem; color: var(--text); }
+.wish-remove-group { display: inline-flex; align-items: center; justify-content: center; gap: 5px; flex-shrink: 0; min-height: 44px; padding: 6px 8px; border-color: transparent; background: transparent; color: var(--secondary); font-size: 0.8125rem; }
+.wish-remove-group svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+#wish-form:not(.is-wish-edit) > .record-panel { padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+#wish-form:not(.is-wish-edit) .wish-group { padding: 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 3px 16px var(--shadow-card); }
+#wish-form:not(.is-wish-edit) .field { margin-bottom: 14px; }
+#wish-form:not(.is-wish-edit) .field:last-child { margin-bottom: 0; }
+#wish-form:not(.is-wish-edit) label { margin-bottom: 6px; font-size: 0.875rem; }
+#wish-form:not(.is-wish-edit) .wish-name-input { min-height: 48px; padding: 10px 12px; }
+#wish-form:not(.is-wish-edit) .wish-memo-input { height: 96px; min-height: 88px; padding: 10px 12px; }
+.wish-name-input { scroll-margin-top: calc(100px + env(safe-area-inset-top, 0px)); }
+.wish-name-input[aria-invalid="true"] { border-color: var(--danger); outline: 2px solid var(--danger); outline-offset: 1px; }
+.wish-name-error { margin: 8px 0 0; }
+#wish-add-group { width: 100%; min-height: 44px; margin-top: 16px; max-width: 100%; border: 1px solid var(--input-border); background: transparent; color: var(--secondary); }
+#wish-add-group:hover { background: var(--subtle); }
+#wish-group-limit { margin: 8px 0 16px; color: var(--muted); font-size: 0.8125rem; text-align: center; }
