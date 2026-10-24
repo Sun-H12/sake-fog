@@ -37,6 +37,20 @@ let isCheckingUpdate = false;
 let observedUpdateWorker = null;
 const watchedRegistrations = new WeakSet();
 const watchedWorkers = new WeakSet();
+const updateNotice = document.getElementById('update-notice');
+const applyUpdateButton = document.getElementById('apply-update');
+const deferUpdateButton = document.getElementById('defer-update');
+const updateNoticeStatus = document.getElementById('update-notice-status');
+const announcedUpdates = new WeakSet();
+let noticeWorker = null;
+let entryBaseline = null;
+let isApplyingUpdate = false;
+let expectedController = null;
+let updatePort = null;
+let updateTimer = null;
+let updateRouteVersion = null;
+let didReloadForUpdate = false;
+let noticeReturnFocus = null;
 let isBackupBusy = false;
 const entryControls = [photoInput, nameInput, impressionInput, dateInput, registerButton, removePhotoButton, backButton, deleteButton];
 let editingRecord = null;
@@ -71,7 +85,7 @@ function isAppRoute(route) {
 }
 
 function isBusy() {
-  return isSaving || isBackupBusy;
+  return isSaving || isBackupBusy || isApplyingUpdate;
 }
 
 function syncControls() {
@@ -174,6 +188,7 @@ function finishOperation() {
 }
 
 window.addEventListener('popstate', (event) => {
+  if (isApplyingUpdate) stopUpdate('画面を移動したため更新を中止しました。もう一度確認してください。');
   returningToRecords = false;
   if (isAppRoute(event.state)) currentRoute = event.state;
   else {
@@ -374,6 +389,7 @@ function showPreview() {
 }
 
 function resetEntry() {
+  entryBaseline = null;
   editingRecord = null;
   selectedPhoto = null;
   nameInput.value = '';
@@ -403,6 +419,7 @@ function openEntry(record = null, preserve = false) {
     dateInput.value = drinkingDay(record) || localDate();
     selectedPhoto = record.photo || null;
   }
+  if (!preserve) entryBaseline = entryValues();
   entryHeading.textContent = record ? 'お酒を編集する' : 'お酒を記録する';
   registerButton.textContent = isSaving ? '処理中…' : (record ? '保存する' : '登録する');
   hideToast();
@@ -537,17 +554,113 @@ function syncUpdateButton() {
       && !['redundant', 'activated'].includes(appRegistration.installing.state));
 }
 
+function entryValues() {
+  return { name: nameInput.value, impression: impressionInput.value,
+    date: dateInput.value, photo: selectedPhoto };
+}
+
+function updateBlockReason() {
+  if (isSaving || isBackupBusy) return '保存・削除・バックアップ・復元の処理が終わってから更新してください。';
+  if (isRouteLoading || returningToRecords
+    || (isApplyingUpdate && updateRouteVersion !== routeVersion)) return '画面の移動が終わってから更新してください。';
+  const values = entryValues();
+  if (failedEntry || (entryBaseline && Object.keys(values).some((key) => values[key] !== entryBaseline[key]))) {
+    return '未保存の変更があります。入力内容を保存してから更新してください。';
+  }
+  if (document.visibilityState !== 'visible') return 'アプリを表示してから更新してください。';
+  return '';
+}
+
+function offerUpdate(worker, manual = false) {
+  if (isApplyingUpdate || (!manual && announcedUpdates.has(worker))) return;
+  announcedUpdates.add(worker);
+  noticeWorker = worker;
+  if (updateNotice.hidden) noticeReturnFocus = document.activeElement;
+  updateNoticeStatus.textContent = '';
+  updateNotice.hidden = false;
+}
+
+function stopUpdate(message) {
+  clearTimeout(updateTimer);
+  updatePort?.close();
+  updatePort = null;
+  expectedController = null;
+  isApplyingUpdate = false;
+  document.querySelector('main').inert = false;
+  applyUpdateButton.disabled = false;
+  deferUpdateButton.disabled = false;
+  updateNoticeStatus.textContent = message;
+  syncControls();
+}
+
+deferUpdateButton.addEventListener('click', () => {
+  if (isApplyingUpdate) return;
+  updateNotice.hidden = true;
+  if (updateNotice.contains(document.activeElement) && noticeReturnFocus?.isConnected) noticeReturnFocus.focus();
+});
+
+applyUpdateButton.addEventListener('click', () => {
+  if (isApplyingUpdate || updateNotice.hidden) return;
+  const worker = appRegistration?.waiting;
+  if (!worker || worker !== noticeWorker || worker.state !== 'installed' || !appRegistration.active) {
+    updateNoticeStatus.textContent = '更新状態が変わりました。設定画面からもう一度確認してください。';
+    return;
+  }
+  const reason = updateBlockReason();
+  if (reason) { updateNoticeStatus.textContent = reason; return; }
+  isApplyingUpdate = true;
+  updateRouteVersion = routeVersion;
+  expectedController = worker;
+  document.querySelector('main').inert = true;
+  applyUpdateButton.disabled = true;
+  deferUpdateButton.disabled = true;
+  syncControls();
+  updateNoticeStatus.textContent = '安全に更新できるか確認しています…';
+  const channel = new MessageChannel();
+  updatePort = channel.port1;
+  updatePort.onmessage = ({ data }) => {
+    if (!isApplyingUpdate || expectedController !== worker) return;
+    if (data?.type === 'UPDATE_BLOCKED') {
+      stopUpdate(data.reason === 'other-clients'
+        ? '別のアプリ画面が開いています。入力を保存し、アプリと関連タブをすべて閉じてから開き直してください。'
+        : '安全性を確認できませんでした。入力を保存し、アプリと関連タブをすべて閉じてから開き直してください。');
+    } else if (data?.type === 'UPDATE_CONFIRM') {
+      const blocked = updateBlockReason();
+      if (blocked || appRegistration.waiting !== worker) {
+        stopUpdate(blocked || '更新状態が変わったため中止しました。もう一度確認してください。');
+        return;
+      }
+      updateNoticeStatus.textContent = '更新しています…';
+      updatePort.postMessage({ type: 'UPDATE_READY' });
+    }
+  };
+  updateTimer = setTimeout(() => stopUpdate('更新の応答を確認できませんでした。入力を保存し、アプリと関連タブをすべて閉じてから開き直してください。'), 10000);
+  try { worker.postMessage({ type: 'APPLY_UPDATE' }, [channel.port2]); }
+  catch { stopUpdate('更新を開始できませんでした。設定画面からもう一度確認してください。'); }
+});
+
+if (supportsAppUpdates) navigator.serviceWorker.addEventListener('controllerchange', () => {
+  if (!isApplyingUpdate || didReloadForUpdate || !expectedController
+    || navigator.serviceWorker.controller !== expectedController) return;
+  const reason = updateBlockReason();
+  if (reason) { stopUpdate(reason); return; }
+  didReloadForUpdate = true;
+  clearTimeout(updateTimer);
+  location.reload();
+});
+
 function setUpdateStatus(message, error = false) {
   updateStatus.textContent = message;
   updateStatus.classList.toggle('error-message', error);
   syncUpdateButton();
 }
 
-function showPendingUpdate() {
+function showPendingUpdate(manual = false) {
   const waiting = appRegistration?.waiting;
   if (waiting && appRegistration.active && waiting !== appRegistration.active
     && waiting.state === 'installed') {
     setUpdateStatus('更新の準備ができました。入力内容を保存し、アプリと関連するタブをすべて閉じてから開き直してください。');
+    offerUpdate(waiting, manual);
     return true;
   }
   const installing = appRegistration?.installing;
@@ -620,12 +733,12 @@ checkUpdateButton.addEventListener('click', async () => {
       if (existing?.scope === new URL('./', location.href).href) observeAppRegistration(existing);
       else await registerServiceWorker();
     }
-    if (!appRegistration || showPendingUpdate()) return;
+    if (!appRegistration || showPendingUpdate(true)) return;
     if (!navigator.onLine) throw new Error('Offline');
     setUpdateStatus('アップデートを確認しています…');
     const workerBeforeCheck = observedUpdateWorker;
     await appRegistration.update();
-    if (showPendingUpdate()) return;
+    if (showPendingUpdate(true)) return;
     // update()の完了はインストール・適用の完了を意味しない。
     if (observedUpdateWorker !== workerBeforeCheck) return;
     setUpdateStatus(appRegistration.active

@@ -12,6 +12,15 @@
   <script src="script.js" defer></script>
 </head>
 <body>
+  <aside id="update-notice" class="update-notice" aria-labelledby="update-notice-title" aria-live="polite" hidden>
+    <h2 id="update-notice-title">新しいバージョンがあります</h2>
+    <p>今すぐ更新しますか？</p>
+    <p id="update-notice-status" role="status" aria-live="polite" aria-atomic="true"></p>
+    <div class="update-notice-actions">
+      <button id="apply-update" type="button">更新する</button>
+      <button id="defer-update" class="secondary-button" type="button">あとで</button>
+    </div>
+  </aside>
   <main class="container">
     <header id="app-header" class="app-header">
       <h1>お酒記録アプリ</h1>
