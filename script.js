@@ -21,6 +21,7 @@ const wishlistSwitch = document.getElementById('show-wishlist');
 let wishRoute = null;
 let wishBaseline = null;
 let failedWish = false;
+let editingWish = null;
 const listStatus = document.getElementById('list-status');
 const saveNotice = document.getElementById('save-notice');
 const toastTitle = document.getElementById('toast-title');
@@ -109,8 +110,8 @@ function isAppRoute(route) {
   return route?.app === 'sake-fog' && route.version === 1
     && typeof route.key === 'string'
     && (route.list === undefined || ['records', 'wishlist'].includes(route.list))
-    && ['records', 'new', 'edit', 'settings', 'detail', 'wish-new'].includes(route.screen)
-    && (!['edit', 'detail'].includes(route.screen) || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
+    && ['records', 'new', 'edit', 'settings', 'detail', 'wish-new', 'wish-edit'].includes(route.screen)
+    && (!['edit', 'detail', 'wish-edit'].includes(route.screen) || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
 }
 
 function isBusy() {
@@ -123,11 +124,12 @@ function syncControls() {
   [backupButton, restoreButton, restoreFile, settingsBack,
     recordsSwitch, wishlistSwitch, wishName, wishMemo, wishSave, wishBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
-    ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete')].forEach((control) => {
+    ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete, .wish-edit')].forEach((control) => {
     control.disabled = blocked;
   });
   // 詳細の読み込み中も戻れるようにする。
   detailBack.disabled = isBusy() || returningToRecords;
+  wishBack.disabled = isBusy() || returningToRecords;
   syncUpdateButton();
 }
 
@@ -169,9 +171,49 @@ async function renderRoute(focus = true) {
       entryRoute = null;
     }
     await showRecords(focus);
-  } else if (route.screen === 'wish-new') {
-    openWish(wishRoute?.key === route.key || failedWish);
-    wishRoute = route;
+  } else if (['wish-new', 'wish-edit'].includes(route.screen)) {
+    const sameTarget = wishRoute?.screen === route.screen && wishRoute.recordId === route.recordId;
+    // 書き込み中の「進む」で別のフォームに入力状態を移さない。
+    if (isSaving && !sameTarget) {
+      returnToRecords();
+      return;
+    }
+    if (failedWish && !sameTarget) {
+      if (!window.confirm('保存に失敗した入力が残っています。入力を破棄して別の登録・編集画面を開きますか？')) {
+        returnToRecords();
+        return;
+      }
+      failedWish = false;
+    }
+    const retained = sameTarget && (wishRoute.key === route.key || failedWish || isSaving);
+    if (retained) {
+      openWish(editingWish, true);
+      wishRoute = route;
+    } else if (route.screen === 'wish-new') {
+      openWish();
+      wishRoute = route;
+    } else {
+      openWish();
+      wishRoute = route;
+      document.getElementById('wish-heading').textContent = '飲みたいお酒を編集';
+      wishSave.textContent = '保存する';
+      wishResult.textContent = '読み込んでいます…';
+      isRouteLoading = true;
+      syncControls();
+      try {
+        const item = await getWishlistItem(route.recordId);
+        if (version !== routeVersion) return;
+        if (!item) throw new Error('この飲みたいお酒は存在しません。');
+        openWish(item);
+        wishRoute = route;
+      } catch (error) {
+        if (version !== routeVersion) return;
+        notifyList(`編集画面を開けませんでした。${error.message}`, true);
+        returnToRecords();
+      } finally {
+        if (version === routeVersion) isRouteLoading = false;
+      }
+    }
   } else if (route.screen === 'detail') {
     await showDetail(route, version, focus);
   } else if (route.screen === 'settings') {
@@ -238,6 +280,11 @@ window.addEventListener('popstate', (event) => {
 });
 
 const toastMessages = {
+  'wish-updated': {
+    title: '飲みたいお酒を更新しました',
+    description: '変更内容を保存しました',
+    icon: 'M5 12l4 4L19 6',
+  },
   'wish-created': {
     title: '飲みたいお酒を登録しました',
     description: '飲みたいリストに追加しました',
@@ -452,6 +499,19 @@ function renderWish(item) {
   }
   const actions = document.createElement('div');
   actions.className = 'wish-actions';
+  const edit = document.createElement('button');
+  edit.type = 'button';
+  edit.className = 'secondary-button wish-edit';
+  edit.setAttribute('aria-label', `${item.name}を編集`);
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('aria-hidden', 'true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  path.setAttribute('d', 'M15 5l4 4M4 20l4-1L20 7a2.8 2.8 0 0 0-4-4L4 15z');
+  icon.append(path);
+  edit.append(icon);
+  edit.addEventListener('click', () => navigate('wish-edit', item.id));
+  actions.append(edit);
   const remove = document.createElement('button');
   remove.type = 'button';
   remove.className = 'secondary-button wish-delete';
@@ -479,6 +539,7 @@ function renderWish(item) {
 }
 
 function resetWish() {
+  editingWish = null;
   wishRoute = null;
   wishBaseline = null;
   wishName.value = '';
@@ -487,7 +548,7 @@ function resetWish() {
   wishResult.textContent = '';
 }
 
-function openWish(preserve = false) {
+function openWish(item = null, preserve = false) {
   ++listRequestVersion;
   clearDetail();
   clearPreview();
@@ -496,8 +557,13 @@ function openWish(preserve = false) {
   if (!preserve) {
     resetWish();
     failedWish = false;
-    wishBaseline = { name: '', memo: '' };
+    editingWish = item;
+    wishName.value = item?.name ?? '';
+    wishMemo.value = item?.memo ?? '';
+    wishBaseline = { name: wishName.value, memo: wishMemo.value };
   }
+  document.getElementById('wish-heading').textContent = editingWish ? '飲みたいお酒を編集' : '飲みたいお酒を登録';
+  wishSave.textContent = isSaving ? '保存中…' : editingWish ? '保存する' : '登録する';
   entryScreen.hidden = true;
   settingsScreen.hidden = true;
   recordsScreen.hidden = true;
@@ -518,24 +584,27 @@ wishForm.addEventListener('submit', async (event) => {
   if (!wishName.reportValidity()) return;
   const values = { name: wishName.value, memo: wishMemo.value };
   const origin = currentRoute;
+  const id = editingWish?.id;
+  if (origin.screen === 'wish-edit' && id !== origin.recordId) return;
   isSaving = true;
   wishResult.textContent = '';
   wishSave.textContent = '保存中…';
   syncControls();
   try {
-    await saveWishlistItem(values);
+    await saveWishlistItem(values, id);
     failedWish = false;
     resetWish();
     listNotice = null;
-    showToast('wish-created');
+    showToast(id == null ? 'wish-created' : 'wish-updated');
     if (currentRoute.key === origin.key) returnToRecords();
   } catch (error) {
     failedWish = true;
-    wishResult.textContent = `登録できませんでした。入力内容は保持されています。${error.message}`;
-    notifyList('飲みたいお酒を登録できませんでした。「＋」から入力内容を確認して再試行できます。', true);
+    wishResult.textContent = `保存できませんでした。入力内容は保持されています。${error.message}`;
+    notifyList(id == null ? '飲みたいお酒を登録できませんでした。「＋」から入力内容を確認して再試行できます。'
+      : '飲みたいお酒を保存できませんでした。元の項目の編集ボタンから入力内容を確認して再試行できます。', true);
   } finally {
     isSaving = false;
-    wishSave.textContent = '登録する';
+    wishSave.textContent = editingWish ? '保存する' : '登録する';
     finishOperation();
   }
 });

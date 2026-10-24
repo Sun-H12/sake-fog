@@ -606,7 +606,8 @@ textarea {
 }
 
 .toast[data-type="created"] .toast-icon,
-.toast[data-type="wish-created"] .toast-icon {
+.toast[data-type="wish-created"] .toast-icon,
+.toast[data-type="wish-updated"] .toast-icon {
   background: var(--success-bg);
   color: var(--success-text);
 }
@@ -852,7 +853,9 @@ textarea {
 .wish-card { padding: 16px; }
 .wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }
-.wish-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.wish-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 12px; }
+.wish-edit { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; }
+.wish-edit svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .wish-delete { color: var(--danger); }
 #wish-save { padding: 10px 12px; font-size: 0.875rem; white-space: nowrap; }
 #wish-result { margin: 0; color: var(--danger); overflow-wrap: anywhere; }

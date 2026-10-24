@@ -147,21 +147,51 @@ async function replaceRecords(records, expectedCount) {
 }
 
 // 飲みたい項目は飲酒記録とは独立して保存する。
-async function saveWishlistItem(values) {
+async function saveWishlistItem(values, id) {
   if (typeof values?.name !== 'string' || !values.name.trim()
     || (values.memo !== undefined && typeof values.memo !== 'string')) {
     throw new Error('飲みたいお酒の名前またはメモが無効です。');
   }
+  if (id != null && (!Number.isSafeInteger(id) || id <= 0)) throw new Error('編集対象のIDが無効です。');
   const database = await openDatabase();
   try {
     return await new Promise((resolve, reject) => {
       const transaction = database.transaction('wishlist', 'readwrite');
-      const request = transaction.objectStore('wishlist').add({
-        name: values.name.trim(), memo: values.memo ?? '', createdAt: new Date().toISOString(),
-      });
+      const store = transaction.objectStore('wishlist');
+      let resultId = id;
+      let failure = null;
+      transaction.oncomplete = () => resolve(resultId);
+      transaction.onabort = () => reject(failure || transaction.error || new Error('保存が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('保存に失敗しました。'));
+      const changes = { name: values.name.trim(), memo: values.memo ?? '' };
+      if (id == null) {
+        const request = store.add({ ...changes, createdAt: new Date().toISOString() });
+        request.onsuccess = () => { resultId = request.result; };
+      } else {
+        const request = store.get(id);
+        request.onsuccess = () => {
+          if (!request.result) {
+            failure = new Error('この飲みたいお酒は存在しません。削除された可能性があります。');
+            transaction.abort();
+            return;
+          }
+          store.put({ ...request.result, ...changes });
+        };
+      }
+    });
+  } finally { database.close(); }
+}
+
+async function getWishlistItem(id) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('編集対象のIDが無効です。');
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction('wishlist', 'readonly');
+      const request = transaction.objectStore('wishlist').get(id);
       transaction.oncomplete = () => resolve(request.result);
-      transaction.onabort = () => reject(transaction.error || new Error('登録が中断されました。'));
-      transaction.onerror = () => reject(transaction.error || new Error('登録に失敗しました。'));
+      transaction.onabort = () => reject(transaction.error || new Error('取得が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('取得に失敗しました。'));
     });
   } finally { database.close(); }
 }
