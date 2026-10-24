@@ -296,16 +296,20 @@ function renderRecord(record) {
   }
   const name = document.createElement('h3');
   name.textContent = record.name;
-  const impression = document.createElement('p');
-  impression.className = 'record-impression';
-  impression.textContent = record.impression || '感想なし';
   const day = document.createElement('time');
   const date = drinkingDay(record);
   if (date) day.dateTime = date;
   day.textContent = `飲んだ日：${date ? date.replaceAll('-', '/') : '不明'}`;
   const info = document.createElement('div');
   info.className = 'record-info';
-  info.append(name, impression, day);
+  info.append(name);
+  if (typeof record.impression === 'string' && record.impression.trim() !== '') {
+    const impression = document.createElement('p');
+    impression.className = 'record-impression';
+    impression.textContent = record.impression;
+    info.append(impression);
+  }
+  info.append(day);
   card.append(photo, info);
   const edit = document.createElement('button');
   edit.type = 'button';
