@@ -876,6 +876,14 @@ textarea {
   color: var(--on-primary);
   border-color: var(--primary);
 }
+.record-filters { display: grid; grid-template-columns: minmax(0, 1fr) 150px; gap: 12px; margin-bottom: 20px; }
+.record-filters > div { min-width: 0; }
+.record-filters label { margin-bottom: 6px; font-size: 0.875rem; }
+#record-order { width: 100%; min-height: 52px; padding: 12px; border: 1px solid var(--input-border); border-radius: 10px; background: var(--surface); color: var(--text); font: inherit; }
+#record-order:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 399px) {
+  .record-filters { grid-template-columns: minmax(0, 1fr); }
+}
 .wish-card { padding: 16px; }
 .wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }

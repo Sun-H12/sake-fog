@@ -170,6 +170,19 @@
         <button id="show-records" class="secondary-button" type="button" aria-pressed="true">飲酒記録</button>
         <button id="show-wishlist" class="secondary-button" type="button" aria-pressed="false">飲みたいお酒</button>
       </div>
+      <div id="record-filters" class="record-filters" role="group" aria-label="飲酒記録の検索と並び替え">
+        <div>
+          <label for="record-search">名前・感想を検索</label>
+          <input id="record-search" type="search" placeholder="検索する文字を入力" autocomplete="off">
+        </div>
+        <div>
+          <label for="record-order">飲んだ日の順序</label>
+          <select id="record-order">
+            <option value="newest">新しい順</option>
+            <option value="oldest">古い順</option>
+          </select>
+        </div>
+      </div>
       <p id="list-status" role="status"></p>
       <button id="retry-list" class="secondary-button" type="button" hidden>もう一度読み込む</button>
       <div id="records-list" class="records-list"></div>

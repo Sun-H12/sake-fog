@@ -10,6 +10,12 @@ const registrationResult = document.getElementById('registration-result');
 const entryScreen = document.getElementById('entry-screen');
 const recordsScreen = document.getElementById('records-screen');
 const recordsList = document.getElementById('records-list');
+const recordFilters = document.getElementById('record-filters');
+const recordSearch = document.getElementById('record-search');
+const recordOrderInput = document.getElementById('record-order');
+let recordQuery = '';
+let recordOrder = 'newest';
+let cachedRecords = null;
 const wishScreen = document.getElementById('wish-entry-screen');
 const wishForm = document.getElementById('wish-form');
 let wishName = document.getElementById('wish-name');
@@ -136,6 +142,7 @@ function syncControls() {
   photoInput.disabled = blocked || selectedPhotos.length >= 3;
   photoPreviews.querySelectorAll('.remove-photo-button').forEach((button) => { button.disabled = blocked; });
   [backupButton, restoreButton, restoreFile, settingsBack,
+    recordSearch, recordOrderInput,
     recordsSwitch, wishlistSwitch, wishName, wishMemo, wishSave, wishBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
     ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete, .wish-edit, .wish-create-record')].forEach((control) => {
@@ -190,6 +197,7 @@ function returnToRecords() {
 async function renderRoute(focus = true) {
   const version = ++routeVersion;
   const route = currentRoute;
+  if (route.screen !== 'records') cachedRecords = null;
   isRouteLoading = false;
   if (route.screen === 'records') {
     if (!isBusy() && !failedWish) resetWish();
@@ -600,10 +608,46 @@ function renderRecord(record) {
   return card;
 }
 
+function renderFilteredRecords() {
+  if (cachedRecords === null || currentRoute.screen !== 'records' || currentRoute.list === 'wishlist') return;
+  const query = recordQuery.trim().toLowerCase();
+  const records = cachedRecords.filter((record) => !query
+    || (typeof record.name === 'string' && record.name.toLowerCase().includes(query))
+    || (typeof record.impression === 'string' && record.impression.toLowerCase().includes(query)));
+  records.sort((a, b) => {
+    const dayA = drinkingDay(a);
+    const dayB = drinkingDay(b);
+    if (!dayA && dayB) return 1;
+    if (dayA && !dayB) return -1;
+    return (recordOrder === 'oldest' ? dayA.localeCompare(dayB) : dayB.localeCompare(dayA)) || b.id - a.id;
+  });
+  clearRecordsList();
+  const fragment = document.createDocumentFragment();
+  records.forEach((record) => fragment.append(renderRecord(record)));
+  recordsList.append(fragment);
+  listStatus.classList.remove('error-message');
+  listStatus.textContent = !cachedRecords.length ? 'まだ記録がありません'
+    : records.length ? '' : '該当する記録はありません';
+  syncControls();
+}
+
+recordSearch.addEventListener('input', () => {
+  recordQuery = recordSearch.value;
+  listNotice = null;
+  renderFilteredRecords();
+});
+recordOrderInput.addEventListener('change', () => {
+  recordOrder = recordOrderInput.value === 'oldest' ? 'oldest' : 'newest';
+  recordOrderInput.value = recordOrder;
+  listNotice = null;
+  renderFilteredRecords();
+});
+
 async function showRecords(focus = true) {
   wishScreen.hidden = true;
   clearDetail();
   const version = ++listRequestVersion;
+  cachedRecords = null;
   entryScreen.hidden = true;
   settingsScreen.hidden = true;
   recordsScreen.hidden = false;
@@ -615,6 +659,9 @@ async function showRecords(focus = true) {
   listStatus.textContent = '記録を読み込んでいます…';
   retryButton.hidden = true;
   const wishlist = currentRoute.list === 'wishlist';
+  recordFilters.hidden = wishlist;
+  recordSearch.value = recordQuery;
+  recordOrderInput.value = recordOrder;
   recordsSwitch.setAttribute('aria-pressed', String(!wishlist));
   wishlistSwitch.setAttribute('aria-pressed', String(wishlist));
   document.getElementById('records-heading').textContent = wishlist ? '飲みたいお酒' : '記録一覧';
@@ -623,12 +670,16 @@ async function showRecords(focus = true) {
   try {
     const records = await (wishlist ? getWishlist() : getRecords());
     if (version !== listRequestVersion) return;
-    records.sort(wishlist ? ((a, b) => b.id - a.id)
-      : ((a, b) => drinkingDay(b).localeCompare(drinkingDay(a)) || b.id - a.id));
-    const fragment = document.createDocumentFragment();
-    records.forEach((record) => fragment.append(wishlist ? renderWish(record) : renderRecord(record)));
-    recordsList.append(fragment);
-    listStatus.textContent = records.length ? '' : wishlist ? '飲みたいお酒はまだありません。「＋」から登録できます。' : 'まだ記録がありません';
+    if (wishlist) {
+      records.sort((a, b) => b.id - a.id);
+      const fragment = document.createDocumentFragment();
+      records.forEach((record) => fragment.append(renderWish(record)));
+      recordsList.append(fragment);
+      listStatus.textContent = records.length ? '' : '飲みたいお酒はまだありません。「＋」から登録できます。';
+    } else {
+      cachedRecords = records;
+      renderFilteredRecords();
+    }
     if (listNotice) notifyList(listNotice.message, listNotice.error);
     syncControls();
   } catch (error) {
