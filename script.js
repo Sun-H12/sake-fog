@@ -655,6 +655,31 @@ function switchList(list) {
 recordsSwitch.addEventListener('click', () => switchList('records'));
 wishlistSwitch.addEventListener('click', () => switchList('wishlist'));
 
+function createGoogleSearchLink(name) {
+  const url = new URL('https://www.google.com/search');
+  url.searchParams.set('q', name);
+  const link = document.createElement('a');
+  link.className = 'google-search-link';
+  link.href = url.href;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.setAttribute('aria-label', `${name}をGoogle検索（新しいタブで開く）`);
+  link.title = link.getAttribute('aria-label');
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  icon.setAttribute('viewBox', '0 0 24 24');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.setAttribute('focusable', 'false');
+  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+  circle.setAttribute('cx', '10.5');
+  circle.setAttribute('cy', '10.5');
+  circle.setAttribute('r', '6.5');
+  const handle = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  handle.setAttribute('d', 'M16 16l5 5');
+  icon.append(circle, handle);
+  link.append(icon);
+  return link;
+}
+
 function renderWish(item) {
   const card = document.createElement('article');
   card.className = 'record-panel wish-card';
@@ -716,7 +741,7 @@ function renderWish(item) {
       finishOperation();
     }
   });
-  actions.append(create, remove, edit);
+  actions.append(create, createGoogleSearchLink(item.name), remove, edit);
   card.append(actions);
   return card;
 }
@@ -919,11 +944,14 @@ async function showDetail(route, version, focus) {
     const photo = detailPhotoViewer.element;
     const name = document.createElement('h3');
     name.textContent = record.name;
+    const nameRow = document.createElement('div');
+    nameRow.className = 'detail-name-row';
+    nameRow.append(name, createGoogleSearchLink(record.name));
     const day = document.createElement('time');
     const date = drinkingDay(record);
     if (date) day.dateTime = date;
     day.textContent = `飲んだ日：${date ? date.replaceAll('-', '/') : '不明'}`;
-    detailContent.append(photo, name, day);
+    detailContent.append(photo, nameRow, day);
     if (typeof record.impression === 'string' && record.impression.trim() !== '') {
       const impression = document.createElement('p');
       impression.className = 'detail-impression';

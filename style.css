@@ -307,6 +307,12 @@ textarea:focus-visible {
 .detail-content { overflow-wrap: anywhere; }
 .detail-content > * { margin: 0; }
 .detail-content > * + * { margin-top: 20px; }
+.detail-name-row { display: flex; align-items: flex-start; gap: 8px; }
+.detail-name-row h3 { flex: 1; min-width: 0; margin: 0; padding-top: 6px; overflow-wrap: anywhere; }
+.google-search-link { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; border: 0; border-radius: 50%; background: var(--subtle); color: var(--secondary); text-decoration: none; }
+.google-search-link:hover { background: var(--subtle-hover); }
+.google-search-link:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+.google-search-link svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .detail-photo {
   width: min(100%, 280px);
   margin-inline: auto;
@@ -874,7 +880,7 @@ textarea {
 .wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
 .wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }
 .wish-actions { display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 12px; }
-.wish-actions button { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--secondary); }
+.wish-actions button, .wish-actions .google-search-link { display: grid; place-items: center; flex: 0 0 44px; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; color: var(--secondary); }
 .wish-actions svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 #wish-save { padding: 10px 12px; font-size: 0.875rem; white-space: nowrap; }
 #wish-result { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
