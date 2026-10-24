@@ -36,6 +36,16 @@ function validateRecord(record, ids) {
   }
 }
 
+function validateWishlistItem(item, ids) {
+  if (!isPlainObject(item) || !Number.isSafeInteger(item.id) || item.id <= 0 || ids.has(item.id)
+    || typeof item.name !== 'string' || !item.name.trim()
+    || (Object.hasOwn(item, 'memo') && typeof item.memo !== 'string') || !isValidTimestamp(item.createdAt)) {
+    throw new Error('飲みたいリストのID・名前・メモ・登録日時が無効、またはIDが重複しています。');
+  }
+  ids.add(item.id);
+  assertJsonValue(item);
+}
+
 function assertJsonValue(value) {
   // JSON化で黙って失われる値は、欠落したバックアップを作る代わりにエラーにする。
   if (value === null || typeof value === 'string' || typeof value === 'boolean'
@@ -75,7 +85,8 @@ function photoFromBackup(photo) {
   return new Blob([bytes], { type: photo.mimeType });
 }
 
-async function createBackupFile(records) {
+async function createBackupFile({ records, wishlist }) {
+  if (!Array.isArray(records) || !Array.isArray(wishlist)) throw new Error('バックアップ対象の一覧が無効です。');
   const converted = [];
   const ids = new Set();
   let estimatedBytes = 0;
@@ -93,7 +104,9 @@ async function createBackupFile(records) {
       photo: photo === null ? null : { mimeType: photo.type, base64: await blobToBase64(photo) },
     });
   }
-  const backup = { format: 'sake-fog-backup', formatVersion: 1, createdAt: new Date().toISOString(), records: converted };
+  const wishIds = new Set();
+  wishlist.forEach((item) => validateWishlistItem(item, wishIds));
+  const backup = { format: 'sake-fog-backup', formatVersion: 2, createdAt: new Date().toISOString(), records: converted, wishlist };
   const file = new Blob([JSON.stringify(backup)], { type: 'application/json' });
   if (file.size > MAX_BACKUP_BYTES) throw new Error('バックアップが50MBを超えます。今回は作成できません。');
   return file;
@@ -107,14 +120,23 @@ async function readBackupFile(file) {
   } catch {
     throw new Error('JSONファイルを読み取れません。正しいバックアップを選択してください。');
   }
-  if (!isPlainObject(backup) || backup.format !== 'sake-fog-backup' || backup.formatVersion !== 1
-    || !isValidTimestamp(backup.createdAt) || !Array.isArray(backup.records)) {
+  if (!isPlainObject(backup) || backup.format !== 'sake-fog-backup' || ![1, 2].includes(backup.formatVersion)
+    || !isValidTimestamp(backup.createdAt) || !Array.isArray(backup.records)
+    || (backup.formatVersion === 2 && !Array.isArray(backup.wishlist))) {
     throw new Error('バックアップの形式・バージョン・作成日時が無効です。');
   }
   const ids = new Set();
   // 全件の検証・写真変換が完了するまで、DBへの書き込みは行わない。
-  return backup.records.map((record) => {
+  const records = backup.records.map((record) => {
     validateRecord(record, ids);
+    assertJsonValue(record);
     return { ...record, photo: photoFromBackup(record.photo) };
   });
+  if (backup.formatVersion === 1) return { formatVersion: 1, records };
+  const wishIds = new Set();
+  const wishlist = backup.wishlist.map((item) => {
+    validateWishlistItem(item, wishIds);
+    return { ...item };
+  });
+  return { formatVersion: 2, records, wishlist };
 }

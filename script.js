@@ -9,6 +9,18 @@ const registrationResult = document.getElementById('registration-result');
 const entryScreen = document.getElementById('entry-screen');
 const recordsScreen = document.getElementById('records-screen');
 const recordsList = document.getElementById('records-list');
+const wishScreen = document.getElementById('wish-entry-screen');
+const wishForm = document.getElementById('wish-form');
+const wishName = document.getElementById('wish-name');
+const wishMemo = document.getElementById('wish-memo');
+const wishSave = document.getElementById('wish-save');
+const wishBack = document.getElementById('wish-back');
+const wishResult = document.getElementById('wish-result');
+const recordsSwitch = document.getElementById('show-records');
+const wishlistSwitch = document.getElementById('show-wishlist');
+let wishRoute = null;
+let wishBaseline = null;
+let failedWish = false;
 const listStatus = document.getElementById('list-status');
 const saveNotice = document.getElementById('save-notice');
 const toastTitle = document.getElementById('toast-title');
@@ -89,13 +101,15 @@ let listNotice = null;
 
 function makeRoute(screen, recordId) {
   return { app: 'sake-fog', version: 1, screen, recordId,
+    list: currentRoute?.list || 'records',
     key: `${Date.now()}-${Math.random()}` };
 }
 
 function isAppRoute(route) {
   return route?.app === 'sake-fog' && route.version === 1
     && typeof route.key === 'string'
-    && ['records', 'new', 'edit', 'settings', 'detail'].includes(route.screen)
+    && (route.list === undefined || ['records', 'wishlist'].includes(route.list))
+    && ['records', 'new', 'edit', 'settings', 'detail', 'wish-new'].includes(route.screen)
     && (!['edit', 'detail'].includes(route.screen) || (Number.isSafeInteger(route.recordId) && route.recordId > 0));
 }
 
@@ -107,8 +121,9 @@ function syncControls() {
   const blocked = isBusy() || returningToRecords || isRouteLoading;
   entryControls.forEach((control) => { control.disabled = blocked; });
   [backupButton, restoreButton, restoreFile, settingsBack,
+    recordsSwitch, wishlistSwitch, wishName, wishMemo, wishSave, wishBack,
     document.getElementById('add-record'), document.getElementById('open-settings'),
-    ...recordsList.querySelectorAll('.edit-button, .record-open')].forEach((control) => {
+    ...recordsList.querySelectorAll('.edit-button, .record-open, .wish-delete')].forEach((control) => {
     control.disabled = blocked;
   });
   // 詳細の読み込み中も戻れるようにする。
@@ -148,11 +163,15 @@ async function renderRoute(focus = true) {
   const route = currentRoute;
   isRouteLoading = false;
   if (route.screen === 'records') {
+    if (!isBusy() && !failedWish) resetWish();
     if (!isBusy() && !failedEntry) {
       resetEntry();
       entryRoute = null;
     }
     await showRecords(focus);
+  } else if (route.screen === 'wish-new') {
+    openWish(wishRoute?.key === route.key || failedWish);
+    wishRoute = route;
   } else if (route.screen === 'detail') {
     await showDetail(route, version, focus);
   } else if (route.screen === 'settings') {
@@ -219,6 +238,16 @@ window.addEventListener('popstate', (event) => {
 });
 
 const toastMessages = {
+  'wish-created': {
+    title: '飲みたいお酒を登録しました',
+    description: '飲みたいリストに追加しました',
+    icon: 'M5 12l4 4L19 6',
+  },
+  'wish-deleted': {
+    title: '飲みたいお酒を削除しました',
+    description: '飲みたいリストから削除しました',
+    icon: 'M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7',
+  },
   restored: {
     title: '記録を復元しました',
     description: 'バックアップの内容を読み込みました',
@@ -355,6 +384,7 @@ function renderRecord(record) {
 }
 
 async function showRecords(focus = true) {
+  wishScreen.hidden = true;
   clearDetail();
   const version = ++listRequestVersion;
   entryScreen.hidden = true;
@@ -367,26 +397,148 @@ async function showRecords(focus = true) {
   listStatus.classList.remove('error-message');
   listStatus.textContent = '記録を読み込んでいます…';
   retryButton.hidden = true;
+  const wishlist = currentRoute.list === 'wishlist';
+  recordsSwitch.setAttribute('aria-pressed', String(!wishlist));
+  wishlistSwitch.setAttribute('aria-pressed', String(wishlist));
+  document.getElementById('records-heading').textContent = wishlist ? '飲みたいお酒' : '記録一覧';
+  document.getElementById('add-record').setAttribute('aria-label', wishlist ? '飲みたいお酒を登録する' : '新しいお酒を記録する');
   if (focus) document.getElementById('records-heading').focus();
   try {
-    const records = await getRecords();
+    const records = await (wishlist ? getWishlist() : getRecords());
     if (version !== listRequestVersion) return;
-    records.sort((a, b) => drinkingDay(b).localeCompare(drinkingDay(a)) || b.id - a.id);
+    records.sort(wishlist ? ((a, b) => b.id - a.id)
+      : ((a, b) => drinkingDay(b).localeCompare(drinkingDay(a)) || b.id - a.id));
     const fragment = document.createDocumentFragment();
-    records.forEach((record) => fragment.append(renderRecord(record)));
+    records.forEach((record) => fragment.append(wishlist ? renderWish(record) : renderRecord(record)));
     recordsList.append(fragment);
-    listStatus.textContent = records.length ? '' : 'まだ記録がありません';
+    listStatus.textContent = records.length ? '' : wishlist ? '飲みたいお酒はまだありません。「＋」から登録できます。' : 'まだ記録がありません';
     if (listNotice) notifyList(listNotice.message, listNotice.error);
     syncControls();
   } catch (error) {
     if (version !== listRequestVersion) return;
     clearRecordsList();
     listStatus.classList.add('error-message');
-    listStatus.textContent = '記録の取得に失敗しました。もう一度お試しください。';
+    listStatus.textContent = ['VersionError', 'DatabaseBlockedError'].includes(error.name) ? error.message
+      : wishlist ? '飲みたいリストの取得に失敗しました。もう一度お試しください。' : '記録の取得に失敗しました。もう一度お試しください。';
     retryButton.hidden = false;
     console.error('記録の取得に失敗しました:', error);
   }
 }
+
+function switchList(list) {
+  if (isBusy() || returningToRecords || isRouteLoading || currentRoute.screen !== 'records'
+    || (currentRoute.list || 'records') === list) return;
+  // 一覧の種類だけを更新し、履歴の段数は増やさない。
+  currentRoute = { ...currentRoute, list };
+  history.replaceState(currentRoute, '');
+  listNotice = null;
+  renderRoute(false);
+}
+
+recordsSwitch.addEventListener('click', () => switchList('records'));
+wishlistSwitch.addEventListener('click', () => switchList('wishlist'));
+
+function renderWish(item) {
+  const card = document.createElement('article');
+  card.className = 'record-panel wish-card';
+  const name = document.createElement('h3');
+  name.textContent = item.name;
+  card.append(name);
+  if (typeof item.memo === 'string' && item.memo.trim() !== '') {
+    const memo = document.createElement('p');
+    memo.className = 'wish-memo';
+    memo.textContent = item.memo;
+    card.append(memo);
+  }
+  const actions = document.createElement('div');
+  actions.className = 'wish-actions';
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'secondary-button wish-delete';
+  remove.textContent = '削除';
+  remove.setAttribute('aria-label', `${item.name}を飲みたいリストから削除`);
+  remove.addEventListener('click', async () => {
+    if (isBusy() || returningToRecords || isRouteLoading || recordsScreen.hidden || currentRoute.list !== 'wishlist') return;
+    if (!window.confirm(`「${item.name}」を飲みたいリストから削除しますか？`)) return;
+    isSaving = true;
+    syncControls();
+    try {
+      await deleteWishlistItem(item.id);
+      listNotice = null;
+      showToast('wish-deleted');
+    } catch (error) {
+      notifyList(`飲みたいお酒を削除できませんでした。${error.message}`, true);
+    } finally {
+      isSaving = false;
+      finishOperation();
+    }
+  });
+  actions.append(remove);
+  card.append(actions);
+  return card;
+}
+
+function resetWish() {
+  wishRoute = null;
+  wishBaseline = null;
+  wishName.value = '';
+  wishName.setCustomValidity('');
+  wishMemo.value = '';
+  wishResult.textContent = '';
+}
+
+function openWish(preserve = false) {
+  ++listRequestVersion;
+  clearDetail();
+  clearPreview();
+  clearRecordsList();
+  hideToast();
+  if (!preserve) {
+    resetWish();
+    failedWish = false;
+    wishBaseline = { name: '', memo: '' };
+  }
+  entryScreen.hidden = true;
+  settingsScreen.hidden = true;
+  recordsScreen.hidden = true;
+  appHeader.hidden = true;
+  wishScreen.hidden = false;
+  document.body.classList.add('entry-mode');
+  document.getElementById('wish-heading').focus();
+  window.scrollTo(0, 0);
+}
+
+wishBack.addEventListener('click', () => { if (!isBusy()) returnToRecords(); });
+wishName.addEventListener('input', () => wishName.setCustomValidity(''));
+wishForm.addEventListener('input', () => { wishResult.textContent = ''; });
+wishForm.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (isBusy() || returningToRecords || isRouteLoading || wishScreen.hidden) return;
+  wishName.setCustomValidity(wishName.value.trim() ? '' : 'お酒の名前を入力してください。');
+  if (!wishName.reportValidity()) return;
+  const values = { name: wishName.value, memo: wishMemo.value };
+  const origin = currentRoute;
+  isSaving = true;
+  wishResult.textContent = '';
+  wishSave.textContent = '保存中…';
+  syncControls();
+  try {
+    await saveWishlistItem(values);
+    failedWish = false;
+    resetWish();
+    listNotice = null;
+    showToast('wish-created');
+    if (currentRoute.key === origin.key) returnToRecords();
+  } catch (error) {
+    failedWish = true;
+    wishResult.textContent = `登録できませんでした。入力内容は保持されています。${error.message}`;
+    notifyList('飲みたいお酒を登録できませんでした。「＋」から入力内容を確認して再試行できます。', true);
+  } finally {
+    isSaving = false;
+    wishSave.textContent = '登録する';
+    finishOperation();
+  }
+});
 
 function clearDetail() {
   detailScreen.hidden = true;
@@ -397,6 +549,7 @@ function clearDetail() {
 }
 
 async function showDetail(route, version, focus) {
+  wishScreen.hidden = true;
   ++listRequestVersion;
   clearDetail();
   clearPreview();
@@ -516,6 +669,7 @@ function resetEntry() {
 }
 
 function openEntry(record = null, preserve = false) {
+  wishScreen.hidden = true;
   clearDetail();
   ++listRequestVersion;
   if (!preserve) {
@@ -545,7 +699,7 @@ function openEntry(record = null, preserve = false) {
   window.scrollTo(0, 0);
 }
 
-document.getElementById('add-record').addEventListener('click', () => navigate('new'));
+document.getElementById('add-record').addEventListener('click', () => navigate(currentRoute.list === 'wishlist' ? 'wish-new' : 'new'));
 backButton.addEventListener('click', () => {
   if (!isBusy()) returnToRecords();
 });
@@ -597,8 +751,8 @@ registerButton.addEventListener('click', async () => {
   } catch (error) {
     failedEntry = true;
     registrationResult.classList.add('is-error');
-    registrationResult.textContent = '保存に失敗しました。入力内容は保持されています。もう一度お試しください。';
-    notifyList('保存に失敗しました。入力内容は保持されています。＋または元の記録の編集から再試行できます。', true);
+    registrationResult.textContent = ['VersionError', 'DatabaseBlockedError'].includes(error.name) ? error.message : '保存に失敗しました。入力内容は保持されています。もう一度お試しください。';
+    notifyList(['VersionError', 'DatabaseBlockedError'].includes(error.name) ? error.message : '保存に失敗しました。入力内容は保持されています。＋または元の記録の編集から再試行できます。', true);
     console.error('記録の保存に失敗しました:', error);
   } finally {
     isSaving = false;
@@ -625,8 +779,8 @@ deleteButton.addEventListener('click', async () => {
   } catch (error) {
     failedEntry = true;
     registrationResult.classList.add('is-error');
-    registrationResult.textContent = '削除に失敗しました。入力内容は保持されています。もう一度お試しください。';
-    notifyList('削除に失敗しました。記録を確認し、もう一度お試しください。', true);
+    registrationResult.textContent = ['VersionError', 'DatabaseBlockedError'].includes(error.name) ? error.message : '削除に失敗しました。入力内容は保持されています。もう一度お試しください。';
+    notifyList(['VersionError', 'DatabaseBlockedError'].includes(error.name) ? error.message : '削除に失敗しました。記録を確認し、もう一度お試しください。', true);
     console.error('記録の削除に失敗しました:', error);
   } finally {
     isSaving = false;
@@ -636,6 +790,7 @@ deleteButton.addEventListener('click', async () => {
 });
 
 function showSettings(preserve = false) {
+  wishScreen.hidden = true;
   clearDetail();
   ++listRequestVersion;
   hideToast();
@@ -676,6 +831,9 @@ function updateBlockReason() {
   if (isRouteLoading || returningToRecords
     || (isApplyingUpdate && updateRouteVersion !== routeVersion)) return '画面の移動が終わってから更新してください。';
   const values = entryValues();
+  if (failedWish || (wishBaseline && (wishName.value !== wishBaseline.name || wishMemo.value !== wishBaseline.memo))) {
+    return '飲みたいお酒に未保存の変更があります。入力内容を保存してから更新してください。';
+  }
   if (failedEntry || (entryBaseline && Object.keys(values).some((key) => values[key] !== entryBaseline[key]))) {
     return '未保存の変更があります。入力内容を保存してから更新してください。';
   }
@@ -878,15 +1036,15 @@ backupButton.addEventListener('click', async () => {
   settingsStatus.textContent = 'バックアップを作成しています…';
   let downloadUrl = null;
   try {
-    const records = await getRecords();
-    const file = await createBackupFile(records);
+    const data = await getBackupData();
+    const file = await createBackupFile(data);
     downloadUrl = URL.createObjectURL(file);
     const link = document.createElement('a');
     link.href = downloadUrl;
     link.download = `sake-fog-backup-${localDate()}.json`;
     document.body.append(link);
     try { link.click(); } finally { link.remove(); }
-    settingsStatus.textContent = `${records.length}件のバックアップのダウンロードを開始しました。ファイルが保存されたことを確認してください。`;
+    settingsStatus.textContent = `飲酒記録${data.records.length}件・飲みたいお酒${data.wishlist.length}件のバックアップのダウンロードを開始しました。ファイルが保存されたことを確認してください。`;
   } catch (error) {
     settingsStatus.classList.add('error-message');
     settingsStatus.textContent = `バックアップを作成できませんでした。${error.message}`;
@@ -919,18 +1077,21 @@ restoreFile.addEventListener('change', async () => {
   settingsStatus.textContent = 'バックアップを検証しています…';
   let committed = false;
   try {
-    const records = await readBackupFile(file);
+    const data = await readBackupFile(file);
     if (!canRestore()) return;
-    const currentCount = await getRecordCount();
+    const counts = await getBackupCounts();
     if (!canRestore()) return;
-    const message = `現在の記録：${currentCount}件\n復元予定：${records.length}件\n\n現在の全記録を置き換えます。この操作は取り消せません。復元しますか？`;
+    const scope = data.formatVersion === 1
+      ? `飲みたいリスト${counts.wishlist}件は保持します（旧形式1）。飲酒記録だけを置き換えます。`
+      : `飲みたいお酒：現在${counts.wishlist}件 → 復元後${data.wishlist.length}件\n飲酒記録と飲みたいリストの両方を置き換えます。`;
+    const message = `飲酒記録：現在${counts.records}件 → 復元後${data.records.length}件\n${scope}\n\nこの操作は取り消せません。復元しますか？`;
     if (!window.confirm(message)) {
       settingsStatus.textContent = '復元をキャンセルしました。現在の記録は変更していません。';
       return;
     }
     if (!canRestore()) return;
     settingsStatus.textContent = '記録を復元しています…';
-    await replaceRecords(records, currentCount);
+    await replaceBackupData(data, counts);
     committed = true;
   } catch (error) {
     settingsStatus.classList.add('error-message');

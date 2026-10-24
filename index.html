@@ -123,12 +123,38 @@
       </button>
       </div>
     </section>
+    <section id="wish-entry-screen" aria-labelledby="wish-heading" hidden>
+      <form id="wish-form">
+        <header class="entry-header">
+          <button id="wish-back" class="secondary-button detail-back-button" type="button" aria-label="保存せずに飲みたいお酒へ戻る">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M19 12H5m7-7-7 7 7 7"/></svg>
+          </button>
+          <h2 id="wish-heading" tabindex="-1">飲みたいお酒を登録</h2>
+          <button id="wish-save" type="submit">登録する</button>
+        </header>
+        <div class="record-panel">
+          <div class="field">
+            <label for="wish-name">お酒の名前（必須）</label>
+            <input id="wish-name" name="name" type="text" required>
+          </div>
+          <div class="field">
+            <label for="wish-memo">メモ（任意）</label>
+            <textarea id="wish-memo" name="memo" rows="5"></textarea>
+          </div>
+          <p id="wish-result" role="status" aria-live="polite"></p>
+        </div>
+      </form>
+    </section>
     <section id="records-screen" aria-labelledby="records-heading">
       <div class="list-heading">
         <h2 id="records-heading" tabindex="-1">記録一覧</h2>
         <button id="open-settings" class="secondary-button settings-button" type="button" aria-label="設定を開く">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 3h4l.5 2.5 2 .9L19 5.5l2 3.5-1.8 1.7v2.6L21 15l-2 3.5-2.5-.9-2 .9L14 21h-4l-.5-2.5-2-.9-2.5.9L3 15l1.8-1.7v-2.6L3 9l2-3.5 2.5.9 2-.9z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
+      </div>
+      <div class="list-switch" role="group" aria-label="表示する一覧">
+        <button id="show-records" class="secondary-button" type="button" aria-pressed="true">飲酒記録</button>
+        <button id="show-wishlist" class="secondary-button" type="button" aria-pressed="false">飲みたいお酒</button>
       </div>
       <p id="list-status" role="status"></p>
       <button id="retry-list" class="secondary-button" type="button" hidden>もう一度読み込む</button>

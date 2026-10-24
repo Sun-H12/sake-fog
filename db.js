@@ -1,11 +1,14 @@
 // IndexedDBへのアクセス。画面操作は呼び出し元で行う。
 function openDatabase() {
   return new Promise((resolve, reject) => {
-    // 追加項目は同じストアに保存できるため、既存のバージョンとデータを維持する。
-    const request = indexedDB.open('sakeLogDB', 1);
+    const request = indexedDB.open('sakeLogDB', 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains('records')) {
         request.result.createObjectStore('records', { keyPath: 'id', autoIncrement: true });
+      }
+      // 既存のrecordsには触れず、新しいストアだけを追加する。
+      if (!request.result.objectStoreNames.contains('wishlist')) {
+        request.result.createObjectStore('wishlist', { keyPath: 'id', autoIncrement: true });
       }
     };
     request.onsuccess = () => {
@@ -13,9 +16,17 @@ function openDatabase() {
       database.onversionchange = () => database.close();
       resolve(database);
     };
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      if (request.error?.name === 'VersionError') {
+        const error = new Error('アプリの更新が必要です。未保存の入力を控え、アプリと関連タブを閉じて最新版を開き直してください。データの削除は不要です。');
+        error.name = 'VersionError';
+        reject(error);
+      } else reject(request.error);
+    };
     request.onblocked = () => {
-      reject(new Error('ほかのタブを閉じて、もう一度お試しください。'));
+      const error = new Error('DB更新を待っています。未保存の入力を控え、ほかのアプリ画面・タブを閉じて、もう一度お試しください。');
+      error.name = 'DatabaseBlockedError';
+      reject(error);
       request.onsuccess = () => request.result.close();
     };
   });
@@ -133,4 +144,121 @@ async function replaceRecords(records, expectedCount) {
   } finally {
     database.close();
   }
+}
+
+// 飲みたい項目は飲酒記録とは独立して保存する。
+async function saveWishlistItem(values) {
+  if (typeof values?.name !== 'string' || !values.name.trim()
+    || (values.memo !== undefined && typeof values.memo !== 'string')) {
+    throw new Error('飲みたいお酒の名前またはメモが無効です。');
+  }
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction('wishlist', 'readwrite');
+      const request = transaction.objectStore('wishlist').add({
+        name: values.name.trim(), memo: values.memo ?? '', createdAt: new Date().toISOString(),
+      });
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onabort = () => reject(transaction.error || new Error('登録が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('登録に失敗しました。'));
+    });
+  } finally { database.close(); }
+}
+
+async function getWishlist() {
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction('wishlist', 'readonly');
+      const request = transaction.objectStore('wishlist').getAll();
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onabort = () => reject(transaction.error || new Error('取得が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('取得に失敗しました。'));
+    });
+  } finally { database.close(); }
+}
+
+async function deleteWishlistItem(id) {
+  if (!Number.isSafeInteger(id) || id <= 0) throw new Error('削除対象のIDが無効です。');
+  const database = await openDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction('wishlist', 'readwrite');
+      transaction.objectStore('wishlist').delete(id);
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(transaction.error || new Error('削除が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('削除に失敗しました。'));
+    });
+  } finally { database.close(); }
+}
+
+// 両ストアを同じ時点の状態として取得する。
+async function getBackupData() {
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(['records', 'wishlist'], 'readonly');
+      const records = transaction.objectStore('records').getAll();
+      const wishlist = transaction.objectStore('wishlist').getAll();
+      transaction.oncomplete = () => resolve({ records: records.result, wishlist: wishlist.result });
+      transaction.onabort = () => reject(transaction.error || new Error('取得が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('取得に失敗しました。'));
+    });
+  } finally { database.close(); }
+}
+
+async function getBackupCounts() {
+  const database = await openDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(['records', 'wishlist'], 'readonly');
+      const records = transaction.objectStore('records').count();
+      const wishlist = transaction.objectStore('wishlist').count();
+      transaction.oncomplete = () => resolve({ records: records.result, wishlist: wishlist.result });
+      transaction.onabort = () => reject(transaction.error || new Error('件数の取得が中断されました。'));
+      transaction.onerror = () => reject(transaction.error || new Error('件数の取得に失敗しました。'));
+    });
+  } finally { database.close(); }
+}
+
+async function replaceBackupData(data, expectedCounts) {
+  if (![1, 2].includes(data?.formatVersion) || !Array.isArray(data.records)
+    || (data.formatVersion === 2 && !Array.isArray(data.wishlist))) {
+    throw new Error('復元データの形式が無効です。');
+  }
+  // 旧形式にwishlistがないことは、空のリストを意味しない。
+  if (data.formatVersion === 1) return replaceRecords(data.records, expectedCounts.records);
+  const database = await openDatabase();
+  try {
+    await new Promise((resolve, reject) => {
+      const transaction = database.transaction(['records', 'wishlist'], 'readwrite');
+      const records = transaction.objectStore('records');
+      const wishlist = transaction.objectStore('wishlist');
+      const recordCount = records.count();
+      const wishCount = wishlist.count();
+      let ready = 0;
+      let failure = null;
+      transaction.oncomplete = () => resolve();
+      transaction.onabort = () => reject(failure || transaction.error || new Error('復元が中断されました。'));
+      transaction.onerror = (event) => { failure ||= event.target.error || transaction.error; };
+      const replace = () => {
+        if (++ready !== 2) return;
+        try {
+          if (recordCount.result !== expectedCounts.records || wishCount.result !== expectedCounts.wishlist) {
+            throw new Error('確認後に件数が変わりました。もう一度復元してください。');
+          }
+          records.clear();
+          wishlist.clear();
+          data.records.forEach((record) => records.put(record));
+          data.wishlist.forEach((item) => wishlist.put(item));
+        } catch (error) {
+          failure = error;
+          try { transaction.abort(); } catch { reject(error); }
+        }
+      };
+      recordCount.onsuccess = replace;
+      wishCount.onsuccess = replace;
+    });
+  } finally { database.close(); }
 }

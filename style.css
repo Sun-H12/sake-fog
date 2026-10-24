@@ -605,7 +605,8 @@ textarea {
   stroke-linejoin: round;
 }
 
-.toast[data-type="created"] .toast-icon {
+.toast[data-type="created"] .toast-icon,
+.toast[data-type="wish-created"] .toast-icon {
   background: var(--success-bg);
   color: var(--success-text);
 }
@@ -620,7 +621,8 @@ textarea {
   color: var(--info-text);
 }
 
-.toast[data-type="deleted"] .toast-icon {
+.toast[data-type="deleted"] .toast-icon,
+.toast[data-type="wish-deleted"] .toast-icon {
   background: var(--danger-bg);
   color: var(--danger-icon);
 }
@@ -839,3 +841,19 @@ textarea {
 #theme-select:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
 #theme-status { color: var(--muted); font-size: 0.875rem; overflow-wrap: anywhere; }
 #theme-status:empty { display: none; }
+
+.list-switch { display: flex; gap: 8px; margin-bottom: 20px; }
+.list-switch button { flex: 1; padding-inline: 8px; font-size: 0.875rem; }
+.list-switch button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+.wish-card { padding: 16px; }
+.wish-card h3 { margin: 0; font-size: 1rem; overflow-wrap: anywhere; }
+.wish-memo { margin: 12px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--secondary); }
+.wish-actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+.wish-delete { color: var(--danger); }
+#wish-save { padding: 10px 12px; font-size: 0.875rem; white-space: nowrap; }
+#wish-result { margin: 0; color: var(--danger); overflow-wrap: anywhere; }
+#wish-result:empty { display: none; }
