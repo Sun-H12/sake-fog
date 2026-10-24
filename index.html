@@ -4,6 +4,42 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#2563EB">
+  <script>
+    // CSSを読み込む前に保存済みのテーマを適用する。
+    (() => {
+      const key = `sake-fog:${new URL('./', location.href).pathname}:theme`;
+      const valid = (value) => ['light', 'dark', 'system'].includes(value) ? value : 'light';
+      const media = matchMedia('(prefers-color-scheme: dark)');
+      let preference = 'light';
+      try { preference = valid(localStorage.getItem(key)); } catch { /* 保存不可でも起動する。 */ }
+      const apply = () => {
+        const theme = preference === 'system' ? (media.matches ? 'dark' : 'light') : preference;
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.colorScheme = theme;
+        document.querySelector('meta[name="theme-color"]').content = theme === 'dark' ? '#0b1220' : '#2563EB';
+        window.dispatchEvent(new Event('themechange'));
+      };
+      window.sakeFogTheme = {
+        get preference() { return preference; },
+        key,
+        set(value) {
+          preference = valid(value);
+          let saved = true;
+          try { localStorage.setItem(key, preference); } catch { saved = false; }
+          apply();
+          return saved;
+        },
+      };
+      media.addEventListener('change', () => { if (preference === 'system') apply(); });
+      window.addEventListener('storage', (event) => {
+        if (event.key === key || event.key === null) {
+          preference = valid(event.newValue);
+          apply();
+        }
+      });
+      apply();
+    })();
+  </script>
   <title>お酒記録アプリ</title>
   <link rel="stylesheet" href="style.css">
   <link rel="manifest" href="manifest.webmanifest">
@@ -116,6 +152,16 @@
         </button>
         <h2 id="settings-heading" tabindex="-1">設定</h2>
       </header>
+      <section class="record-panel theme-panel" aria-labelledby="theme-heading">
+        <h3 id="theme-heading">表示テーマ</h3>
+        <label for="theme-select">テーマを選択</label>
+        <select id="theme-select" aria-describedby="theme-status">
+          <option value="light">ライト</option>
+          <option value="dark">ダーク</option>
+          <option value="system">端末設定に従う</option>
+        </select>
+        <p id="theme-status" role="status" aria-live="polite"></p>
+      </section>
       <div class="record-panel backup-panel">
         <h3>バックアップと復元</h3>
         <p class="note">写真を含むすべての記録をJSONファイルで保存できます。</p>

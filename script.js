@@ -24,6 +24,16 @@ const deleteButton = document.getElementById('delete-record');
 const deleteLabel = document.getElementById('delete-label');
 const settingsScreen = document.getElementById('settings-screen');
 const settingsBack = document.getElementById('settings-back');
+const themeSelect = document.getElementById('theme-select');
+const themeStatus = document.getElementById('theme-status');
+themeSelect.value = window.sakeFogTheme.preference;
+themeSelect.addEventListener('change', () => {
+  const saved = window.sakeFogTheme.set(themeSelect.value);
+  themeStatus.textContent = saved ? '' : 'テーマは変更されましたが、設定を保存できませんでした。次回起動時は保存済みの設定に戻る場合があります。';
+});
+window.addEventListener('themechange', () => {
+  themeSelect.value = window.sakeFogTheme.preference;
+});
 const detailScreen = document.getElementById('detail-screen');
 const detailBack = document.getElementById('detail-back');
 const detailContent = document.getElementById('detail-content');
